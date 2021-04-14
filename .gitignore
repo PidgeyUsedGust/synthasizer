@@ -1,0 +1,8 @@
+.DS_Store
+._*
+__pycache__
+*.egg-info*
+.vscode
+Pipfile.lock
+build/
+.ipynb*

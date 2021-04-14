@@ -25,8 +25,9 @@ Some improvements have been made over the years to make it more robust for real 
 
 ## TODO
 
+* Add table detector based on MUPPETS.
 * Implement new reconstruction error.
-* Implement search algorithm
+* Implement search algorithm.
 
 ## Future improvements
 

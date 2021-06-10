@@ -3,9 +3,10 @@ import string
 import textdistance
 import itertools
 from abc import ABC, abstractmethod
-from typing import Callable, List, Optional
-from difflib import SequenceMatcher
+from typing import Callable, Optional
 from .table import Cell
+
+StringSimilarity = Callable[[str, str], float]
 
 
 class CellSimilarity(ABC):
@@ -16,19 +17,13 @@ class CellSimilarity(ABC):
         pass
 
 
-class StringSimilarity(ABC):
-    @abstractmethod
-    def __call__(self, a: str, b: str) -> float:
-        pass
-
-
-class WrappedCellSimilarity(CellSimilarity):
+class SyntacticCellSimilarity(CellSimilarity):
     """Wrapper around string similarity."""
 
-    def __init__(self, similarity: Callable[[str, str], float]):
+    def __init__(self, similarity: StringSimilarity):
         self.similarity = similarity
 
-    def __call__(self, a: Cell, b: Cell):
+    def __call__(self, a: Cell, b: Cell) -> float:
         return self.similarity(str(a.value), str(b.value))
 
 
@@ -41,7 +36,7 @@ class CompressedSimilarity(StringSimilarity):
         "0": string.digits,
     }
 
-    def __init__(self, base: Optional[Callable[[str, str], float]] = None):
+    def __init__(self, base: Optional[StringSimilarity] = None):
         self._base = base or textdistance.needleman_wunsch.normalized_similarity
         self._map = {ch: cl for cl, chs in self.classes.items() for ch in chs}
 
@@ -82,7 +77,7 @@ def _pattern(text: str) -> str:
 
 def _dict_to_function(d, missing=1, equal=0):
     """Wrap a dictionary as a function.
-    
+
     Utility function to create `sim_func` from custom dictionaries.
 
     """

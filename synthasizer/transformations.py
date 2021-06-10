@@ -25,7 +25,7 @@ class Transformation(ABC):
 
 
 class Delete(Transformation):
-    """Delete all rows that don't specify a condition in a column """
+    """Delete all rows that don't specify a condition in a column"""
 
     conditions = [EmptyCondition]
     """List of conditions."""
@@ -53,15 +53,17 @@ class Delete(Transformation):
     def __str__(self):
         return "Delete({}, {})".format(self._column, self._condition)
 
+    def __repr__(self):
+        return "Delete({}, {})".format(repr(self._column), repr(self._condition))
+
     def __hash__(self):
         return hash(("Delete", self._column, str(self._condition)))
 
 
 class Divide(Transformation):
-    """Divide and fill.
-    
-    Split on having different values for a property
-    and then forward fill.
+    """Divide.
+
+    Split on having different values for a property.
 
     Divides the column in place.
 
@@ -79,7 +81,7 @@ class Divide(Transformation):
         masks = [
             column.map(lambda x: getattr(x, self._on) == value) for value in values
         ]
-        data = pd.concat([column[mask] for mask in masks], axis=1).ffill()
+        data = pd.concat([column[mask] for mask in masks], axis=1)
         table.df = pd.concat(
             (table[:, : self._column], data, table[:, self._column + 1 :]), axis=1
         ).fillna(Cell(None))
@@ -110,10 +112,16 @@ class Divide(Transformation):
                     arguments.append((i, s))
         return arguments
 
+    def __str__(self) -> str:
+        return "Divide({}, {})".format(self._column, self._on)
+
+    def __repr__(self) -> str:
+        return "Divide({}, {})".format(repr(self._column), repr(self._on))
+
 
 class Header(Transformation):
     """Set header.
-    
+
     If multiple rows are set to be the header
     and they can be compressed, that is done.
 
@@ -121,7 +129,7 @@ class Header(Transformation):
 
         A B C
         A     D
-    
+
     as header becomes
 
         A B C D
@@ -131,23 +139,42 @@ class Header(Transformation):
     """
 
     def __init__(self, n: int):
+        """
+
+        Args:
+            n: Number of lines to take as header.
+
+        """
+        assert n > 0
         self._n = n
 
     def __call__(self, table: Table):
         table = copy(table)
-        if self._n > 0:
-            columns = pd.MultiIndex(table.df.iloc[: self._n].values)
+        if self._n > 1:
+            # first check if need to compress
+            headers = table.df.iloc[: self._n].values
+            mask = np.vectorize(bool)(headers)
+            # can compress because no column has more
+            # than one value
+            if (mask.sum(axis=0) < 2).all():
+                columns = np.full(mask.shape[1], Cell(None))
+                for i, row in enumerate(mask):
+                    columns[row] = headers[i][row]
+            # else make multi index
+            else:
+                columns = pd.MultiIndex.from_arrays(table.df.iloc[: self._n].values)
         else:
-            columns = table.df.iloc[self._n]
+            columns = table.df.iloc[self._n - 1]
         table = copy(table)
         table.df.columns = columns
         table.df = table.df.iloc[self._n + 1 :]
+        table.df.reset_index(drop=True, inplace=True)
         return table
 
     @classmethod
     def arguments(cls, table: Table) -> List[Tuple[int]]:
         """Use dtype and style to determine arguments.
-        
+
         First try if can be detected using only dtypes.
         If that doesn't work, try to detect using style.
 
@@ -164,19 +191,19 @@ class Header(Transformation):
     @classmethod
     def arguments_dtype(cls, table: Table) -> List[Tuple[int]]:
         """Arguments based on dtype.
-        
+
         Look for the first row after which a consistent
         dtype is obtained.
 
         """
         arguments = list()
-        df = table.to_dataframe()
+        df = table.dataframe
         for name in df:
             column = df[name]
             for i in range(len(column) // 2):
-                t = pd.api.types.infer_dtype(column.iloc[i:], skipna=True)
+                t = pd.api.types.infer_dtype(column.iloc[i + 1 :], skipna=True)
                 if "mixed" not in t:
-                    if i > 0 and (i,) not in arguments:
+                    if (i,) not in arguments:
                         arguments.append((i,))
                     break
         return arguments
@@ -184,7 +211,7 @@ class Header(Transformation):
     @classmethod
     def arguments_style(cls, table: Table) -> List[Tuple[int]]:
         """Arguments based on style.
-        
+
         Look for the first row after which a consistent
         style is obtained.
 
@@ -199,10 +226,16 @@ class Header(Transformation):
                         if j > 0 and ((j,) not in arguments):
                             arguments.append((j,))
                         break
-        return arguments
+        return [a for a in arguments if a[0] > 0]
+
+    def __str__(self) -> str:
+        return "Header({})".format(self._n)
+
+    def __repr__(self) -> str:
+        return "Header({})".format(repr(self._n))
 
 
-class ForwardFill(Transformation):
+class Fill(Transformation):
     """Forward fill a column."""
 
     def __init__(self, column: int):
@@ -223,21 +256,26 @@ class ForwardFill(Transformation):
         return arguments
 
     def __str__(self):
-        return "ForwardFill({})".format(self.column)
+        return "ForwardFill({})".format(self._column)
+
+    def __repr__(self) -> str:
+        return "ForwardFill({})".format(repr(self._column))
 
     def __hash__(self):
         return hash(("ForwardFill", self._column))
 
 
 class Fold(Transformation):
-    """Unpivot transformation (wide to long)."""
+    """Unpivot transformation (wide to long).
+
+    Can only fold tables with headers. Else,
+    use a Stack with interval set to 1.
+
+    """
 
     def __init__(self, column1: int, column2: int):
         self._column1 = column1
         self._column2 = column2
-
-    def __str__(self):
-        return "Fold({}, {})".format(self._column1, self._column2)
 
     def __hash__(self):
         return hash(("Fold", self._column1, self._column2))
@@ -258,15 +296,18 @@ class Fold(Transformation):
     @classmethod
     def arguments(cls, table: Table) -> List[Tuple[int, int]]:
         """Get fold arguments.
-        
+
         By default, use only dtype and color information.
 
         Require that (1) the folded columns share dtype
         and (2) if color is available, all cells require
         the same color as they will end up in the same
         column.
-        
+
         """
+        if not table.header:
+            return []
+        # else, find the candidates
         arguments = list()
         color = table.color_df
         types = table.column_types
@@ -292,3 +333,88 @@ class Fold(Transformation):
             else:
                 arguments.append((a, b))
         return arguments
+
+    def __str__(self):
+        return "Fold({}, {})".format(self._column1, self._column2)
+
+    def __repr__(self):
+        return "Fold({}, {})".format(repr(self._column1), repr(self._column2))
+
+
+class Stack(Transformation):
+    """Stack a range of column."""
+
+    def __init__(self, column1: int, column2: int, interval: int):
+        self._column1 = column1
+        self._column2 = column2
+        self._interval = interval
+
+    def __call__(self, table: Table) -> Table:
+        """ """
+        return table
+
+    @classmethod
+    def arguments(cls, table: Table) -> List[Tuple[int, int]]:
+        """Get stack arguments.
+
+        Look for a range (a, b) of columns and an
+        interval i such that i divides (b-a) and
+        each column that gets stacked has the
+        same dtype and style.
+
+        """
+        return table
+
+    def __hash__(self):
+        return hash(("Stack", self._column1, self._column2, self._interval))
+
+    def __str__(self):
+        return "Stack({}, {}, {})".format(self._column1, self._column2, self._interval)
+
+    def __repr__(self):
+        return "Stack({}, {}, {})".format(
+            repr(self._column1), repr(self._column2), repr(self._interval)
+        )
+
+
+class DivideAndFill(Transformation):
+    """Divide and forward fill.
+
+    Split on having different values for a property.
+
+    Divides the column in place.
+
+    """
+
+    def __init__(self, column: int, on: str = "dtype"):
+        self._column = column
+        self._on = on
+
+    def __call__(self, table: Table) -> Table:
+        # use divide
+        divided = Divide(self._column, self._on)(table)
+        # compute number of divided
+        b = self._column
+        e = self._column + (divided.width - table.width) + 1
+        # forward fill the divided columns
+        divided.df.iloc[:, b:e] = (
+            divided.df.iloc[:, b:e]
+            .replace([Cell(None)], np.nan)
+            .ffill()
+            .fillna(Cell(None))
+        )
+        return divided
+
+    @classmethod
+    def arguments(cls, table: Table) -> List[Tuple[int, str]]:
+        """Arguments exactly the same as divide."""
+        return Divide.arguments(table)
+
+    def __hash__(self) -> int:
+        return hash(("DivideAndFill", self._column, self._on))
+
+    def __str__(self) -> str:
+        return "DivideAndFill({}, {})".format(self._column, self._on)
+
+    def __repr__(self) -> str:
+        return "DivideAndFill({}, {})".format(repr(self._column), repr(self._on))

@@ -6,6 +6,7 @@ verify_ssl = true
 [dev-packages]
 ipykernel = "*"
 black = "*"
+jupyter = "*"
 
 [packages]
 synthasizer = {editable = true, path = "."}
@@ -14,7 +15,7 @@ openpyxl = "*"
 textdistance = "*"
 
 [requires]
-python_version = "3.8"
+python_version = "3.9"
 
 [scripts]
 install_kernel = "python -m ipykernel install --user --name synthasizer --display-name \"synthasizer\""

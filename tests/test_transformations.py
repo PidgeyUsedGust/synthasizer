@@ -1,44 +1,34 @@
-import pandas as pd
-import numpy as np
-import synthasizer
-from pathlib import Path
+from tests.test_table import test_copy
+from synthasizer.table import detect
+import openpyxl
+from synthasizer.transformations import *
 
 
-def test_delete():
-    from synthasizer.transformations import Delete
-
-    df = pd.read_csv(Path(__file__).parent / ".." / "data" / "sales.csv")
-    arguments = Delete.arguments(df)
-    argument = arguments[1]
-    delete = Delete(*argument)
-    df2 = delete(df)
-
-
-def test_ffill():
-    from synthasizer.transformations import ForwardFill
-
-    df = pd.read_csv(Path(__file__).parent / ".." / "data" / "sales.csv")
-    arguments = ForwardFill.arguments(df)
-
-    ff = ForwardFill(*arguments[0])
-    df2 = ff(df)
+def test_header():
+    wb = openpyxl.load_workbook("data/icecream.xlsx")
+    icecream = detect(wb["icecream"])[0]
+    icecream_header = Header(1)(icecream)
+    header = detect(wb["header"])[0]
+    header_header = Header(2)(header)
+    assert icecream_header.dataframe.equals(header_header.dataframe)
+    assert isinstance(header_header.df.columns, pd.Index)
 
 
-def test_fold():
-    from synthasizer.transformations import Fold
-
-    df = pd.read_csv(Path(__file__).parent / ".." / "data" / "sales.csv")
-    f = Fold(2, 4)
-    df2 = f(df)
-
-    print(df)
-    print(Fold.arguments(df))
-
-    assert df2.shape == (27, 6)
+def test_header_arguments():
+    wb = openpyxl.load_workbook("data/icecream.xlsx")
+    # test regular
+    icecream = detect(wb["icecream"])[0]
+    icecream_arguments = Header.arguments(icecream)
+    assert len(icecream_arguments) == 1
+    assert (0,) in icecream_arguments
+    # test
+    header = detect(wb["header"])[0]
+    header_arguments = Header.arguments(header)
+    assert len(header_arguments) == 2
+    assert (0,) in header_arguments
+    assert (1,) in header_arguments
 
 
 if __name__ == "__main__":
-
-    test_delete()
-    test_ffill()
-    test_fold()
+    test_header()
+    test_header_arguments()

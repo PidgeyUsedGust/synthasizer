@@ -1,8 +1,24 @@
-import math
-import pandas as pd
+"""Heuristics.
+
+Heuristics compute a score on the estimated quality
+of a table, according to some criterium.
+
+Aside from heuristics on the whole table, they can also be
+defined on a single column. A wrapper heuristic computes
+their value for the whole table, but it allows the wrangling
+algorithm to focus on specfic columns.
+
+All heuristics should return a score in [0, 1] to make
+it easy to combine them.
+
+"""
+from typing import Counter, List, Optional
 import numpy as np
+from itertools import combinations
 from abc import ABC, abstractmethod
-from .similarity import *
+
+from numpy.lib.arraysetops import unique
+from .similarity import CellSimilarity, CompressedSimilarity
 from .table import Table
 
 
@@ -14,16 +30,6 @@ class Heuristic(ABC):
         pass
 
 
-class ColorRowHeuristic(Heuristic):
-    """Check if row with colors exists."""
-
-    def __call__(self, table: Table) -> float:
-        rows = table.color_df.apply(frozenset, axis=1).to_list()
-        if table.header:
-            rows.append(frozenset(table.color_df.columns.map(lambda c: c.color)))
-        print(set.union(*rows))
-
-
 class ColumnHeuristic(ABC):
     """Compute heuristic for each column."""
 
@@ -32,8 +38,58 @@ class ColumnHeuristic(ABC):
         pass
 
 
+class WeightedHeuristic(Heuristic):
+    """Weighted combination of other heuristics."""
+
+    def __init__(
+        self, heuristics: List[Heuristic], weights: Optional[List[float]] = None
+    ) -> None:
+        self._heuristics = heuristics
+        # ensure that the weights sum to 1
+        if weights is not None:
+            self._weights = np.array(weights) / sum(weights)
+        else:
+            self._weights = np.ones(len(heuristics)) / len(heuristics)
+
+    def __call__(self, table: Table) -> float:
+        return np.mean(
+            self._weights[i] * h(table) for i, h in enumerate(self._heuristics)
+        )
+
+
+class ColorRowHeuristic(Heuristic):
+    """Check if row with colors exists."""
+
+    def __call__(self, table: Table) -> float:
+        colors = table.color_df
+        # get colors in each row
+        rows = colors.apply(set, axis=1).to_list()
+        if table.header:
+            rows.append(set(colors.columns.map(lambda c: c.color)))
+        # get all unique colors
+        unique = set.union(*rows)
+        # get score
+        return max(map(len, rows)) / len(unique)
+
+
+class AggregatedHeuristic(Heuristic):
+    """Turn a ColumnHeuristic into a Heuristic."""
+
+    def __init__(self, heuristic: ColumnHeuristic) -> None:
+        super().__init__()
+        self._heuristic = heuristic
+
+    def __call__(self, table: Table) -> float:
+        return np.mean(self._heuristic(table))
+
+
 class ColorColumnHeuristic(ColumnHeuristic):
-    """Use colors to compute heuristic."""
+    """Use colors to compute heuristic.
+
+    Assume each target column to be marked with
+    a different color.
+
+    """
 
     def __call__(self, table: Table) -> float:
         colors = table.color_df
@@ -42,20 +98,81 @@ class ColorColumnHeuristic(ColumnHeuristic):
 
 
 class EmptyColumnHeuristic(ColumnHeuristic):
-    """Use empty values to compute heuristic."""
+    """Use empty values to compute heuristic.
+
+    Tolerance parameter ensures that missing a few values
+    doesn't result in superfluous fill operations acting
+    like missing data imputers.
+
+    """
+
+    def __init__(self, tolerance: float = 0.9) -> None:
+        self._tolerance = tolerance
 
     def __call__(self, table: Table) -> np.ndarray:
-        return [table[i].map(bool).sum() / table.height for i in range(table.width)]
+        scores = list()
+        for i in range(table.width):
+            v = table[i].map(bool).sum() / float(table.height)
+            if v > self._tolerance:
+                scores.append(1)
+            else:
+                scores.append(v)
+        return scores
 
 
 class ValueColumnHeuristic(ColumnHeuristic):
-    """Use cell similarity."""
+    """Use cell similarity for strings.
+
+    Will skip columns with a clean type, such
+    as numbers and dates.
+
+    """
 
     def __init__(self, similarity: Optional[CellSimilarity] = None):
-        self._similarity = similarity
+        self._similarity = similarity or CompressedSimilarity()
 
     def __call__(self, table: Table) -> np.ndarray:
-        pass
+        scores = np.ones(table.width)
+        dtypes = table.column_types
+        for i in range(table.width):
+            # string type, compute average similarity between cells
+            if dtypes[i] == "string":
+                values = set(cell.value for cell in table[i] if cell)
+                simils = [self._similarity(a, b) for a, b in combinations(values, 2)]
+                scores[i] = np.mean(simils)
+            # mixed columns
+            elif "mixed" in dtypes[i]:
+                ctypes = Counter(cell.dtype for cell in table[i])
+                _, n = ctypes.most_common(1)[0]
+                scores[i] = float(n) / table[i].map(bool).sum()
+            # uniform number columns get a perfect score
+            else:
+                scores[i] = 1.0
+            # print(table[i].to_list(), scores[i])
+        return scores
+
+
+# class TypeColumnHeuristic(ColumnHeuristic):
+#     """Heuristic based on uniform types.
+
+#     Computers uniformity of types for all mixed columns,
+#     and gives 1 in other columns.
+
+#     """
+
+#     def __call__(self, table: Table) -> np.ndarray:
+#         dtypes = table.column_types
+#         scores = np.zeros(table.width)
+#         for i in range(table.width):
+#             # mixed column, compute purity
+#             if "mixed" in dtypes:
+#                 ctypes = Counter(cell.dtype for cell in table[i])
+#                 _, n = ctypes.most_common(1)[0]
+#                 scores[i] = float(n) / table[i].table[i].map(bool).sum()
+#             # pure column
+#             else:
+#                 scores[i] = 1.0
+#         return scores
 
 
 # def quality(table: pd.DataFrame, distance: Similarity):
@@ -138,36 +255,35 @@ class ValueColumnHeuristic(ColumnHeuristic):
 #     return scores[i][0]  # * max(0.01, (1 - table.assignment_score))
 
 
-def quality_mixed(table, distance, noise=1):
-    """Mixed quality.
+# def quality_mixed(table, distance, noise=1):
+#     """Mixed quality.
 
-    Use assignment for those columns.
-    """
-    # get score for colored columns
-    score_color = quality_colors(table, distance, noise=noise)
-    # get colored columns
-    color_colums = {x for (_, x) in table.assignment}
-    # if no other columns, return
-    if len(color_colums) == table.n:
-        return score_color
-    # get score for other columns
-    score_nocolor = 0
-    for c in range(table.n):
-        if c not in color_colums:
-            column = table[c, :]
-            column_score = 0
-            n_distances = 0
-            for (e1, e2) in itertools.combinations(column, 2):
-                if e1.value and e2.value:
-                    column_score += distance(e1.value, e2.value)
-                    n_distances += 1
-            # add empty value normalised column uniformity to score.
-            e = float(column.count("")) / len(column)
-            if e < (1 - noise):
-                e = 0
-            # score_nocolor += ((column_score / max(1, n_distances)) *
-            #                   (1 + (column.count('') / len(column))))
-            score_nocolor += (column_score / max(1, n_distances)) + e
-    # average for table
-    return score_color + score_nocolor
-
+#     Use assignment for those columns.
+#     """
+#     # get score for colored columns
+#     score_color = quality_colors(table, distance, noise=noise)
+#     # get colored columns
+#     color_colums = {x for (_, x) in table.assignment}
+#     # if no other columns, return
+#     if len(color_colums) == table.n:
+#         return score_color
+#     # get score for other columns
+#     score_nocolor = 0
+#     for c in range(table.n):
+#         if c not in color_colums:
+#             column = table[c, :]
+#             column_score = 0
+#             n_distances = 0
+#             for (e1, e2) in itertools.combinations(column, 2):
+#                 if e1.value and e2.value:
+#                     column_score += distance(e1.value, e2.value)
+#                     n_distances += 1
+#             # add empty value normalised column uniformity to score.
+#             e = float(column.count("")) / len(column)
+#             if e < (1 - noise):
+#                 e = 0
+#             # score_nocolor += ((column_score / max(1, n_distances)) *
+#             #                   (1 + (column.count('') / len(column))))
+#             score_nocolor += (column_score / max(1, n_distances)) + e
+#     # average for table
+#     return score_color + score_nocolor

@@ -37,6 +37,9 @@ class ColumnHeuristic(ABC):
     def __call__(self, table: Table) -> np.ndarray:
         pass
 
+    def __repr__(self) -> str:
+        return "{}()".format(self.__class__.__name__)
+
 
 class WeightedHeuristic(Heuristic):
     """Weighted combination of other heuristics."""
@@ -46,15 +49,16 @@ class WeightedHeuristic(Heuristic):
     ) -> None:
         self._heuristics = heuristics
         # ensure that the weights sum to 1
-        if weights is not None:
-            self._weights = np.array(weights) / sum(weights)
-        else:
-            self._weights = np.ones(len(heuristics)) / len(heuristics)
+        if weights is None:
+            weights = np.ones(len(heuristics))
+        self._weights = np.array(weights) / sum(weights)
 
     def __call__(self, table: Table) -> float:
-        return np.mean(
-            self._weights[i] * h(table) for i, h in enumerate(self._heuristics)
-        )
+        scores = list()
+        for i, heuristic in enumerate(self._heuristics):
+            # print(heuristic, heuristic(table))
+            scores.append(self._weights[i] * heuristic(table))
+        return len(self._heuristics) * np.mean(scores)
 
 
 class ColorRowHeuristic(Heuristic):
@@ -65,7 +69,7 @@ class ColorRowHeuristic(Heuristic):
         # get colors in each row
         rows = colors.apply(set, axis=1).to_list()
         if table.header:
-            rows.append(set(colors.columns.map(lambda c: c.color)))
+            rows.append(set(colors.columns))
         # get all unique colors
         unique = set.union(*rows)
         # get score
@@ -82,6 +86,9 @@ class AggregatedHeuristic(Heuristic):
     def __call__(self, table: Table) -> float:
         return np.mean(self._heuristic(table))
 
+    def __repr__(self) -> str:
+        return "AggregatedHeuristic({})".format(repr(self._heuristic))
+
 
 class ColorColumnHeuristic(ColumnHeuristic):
     """Use colors to compute heuristic.
@@ -92,9 +99,16 @@ class ColorColumnHeuristic(ColumnHeuristic):
     """
 
     def __call__(self, table: Table) -> float:
-        colors = table.color_df
-        column = [set(colors.iloc[:, i].unique()) for i in range(table.width)]
-        return [float(len(colors) < 3) for colors in column]
+        cdf = table.color_df
+        columns = [set(cdf.iloc[:, i]) for i in range(table.width)]
+        # add colors of header cells
+        if table.header:
+            for i in range(table.width):
+                columns[i].add(cdf.columns[i])
+        # remove no colors
+        columns = [c - {0} for c in columns]
+        # compute score
+        return [1.0 / max(1, len(n)) for n in columns]
 
 
 class EmptyColumnHeuristic(ColumnHeuristic):
@@ -106,7 +120,7 @@ class EmptyColumnHeuristic(ColumnHeuristic):
 
     """
 
-    def __init__(self, tolerance: float = 0.9) -> None:
+    def __init__(self, tolerance: float = 0.99) -> None:
         self._tolerance = tolerance
 
     def __call__(self, table: Table) -> np.ndarray:
@@ -138,8 +152,13 @@ class ValueColumnHeuristic(ColumnHeuristic):
             # string type, compute average similarity between cells
             if dtypes[i] == "string":
                 values = set(cell.value for cell in table[i] if cell)
-                simils = [self._similarity(a, b) for a, b in combinations(values, 2)]
-                scores[i] = np.mean(simils)
+                if len(values) > 1:
+                    simils = [
+                        self._similarity(a, b) for a, b in combinations(values, 2)
+                    ]
+                    scores[i] = np.mean(simils)
+                else:
+                    scores[i] = 1.0
             # mixed columns
             elif "mixed" in dtypes[i]:
                 ctypes = Counter(cell.dtype for cell in table[i])

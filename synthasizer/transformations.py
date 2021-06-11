@@ -4,7 +4,7 @@ from typing import List, Tuple, Any, Union
 from collections import Counter
 import numpy as np
 import pandas as pd
-from .conditions import Condition, EmptyCondition
+from .conditions import Condition, EmptyCondition, StyleCondition
 from .table import Table, Cell
 
 
@@ -27,7 +27,7 @@ class Transformation(ABC):
 class Delete(Transformation):
     """Delete all rows that don't specify a condition in a column"""
 
-    conditions = [EmptyCondition]
+    conditions = [EmptyCondition, StyleCondition]
     """List of conditions."""
 
     def __init__(self, column: int, condition: Condition):
@@ -37,6 +37,7 @@ class Delete(Transformation):
     def __call__(self, table: Table):
         table = copy(table)
         table.df = table.df[~table.df.iloc[:, self._column].map(self._condition)]
+        table.df.reset_index(drop=True, inplace=True)
         return table
 
     @classmethod
@@ -107,7 +108,7 @@ class Divide(Transformation):
         for i in range(table.width):
             column = table[i]
             for s in column[0].style:
-                styles = Counter(c.style[s] for c in column)
+                styles = Counter(c.style[s] for c in column if c)
                 if len(styles) > 1:
                     arguments.append((i, s))
         return arguments
@@ -167,7 +168,7 @@ class Header(Transformation):
             columns = table.df.iloc[self._n - 1]
         table = copy(table)
         table.df.columns = columns
-        table.df = table.df.iloc[self._n + 1 :]
+        table.df = table.df.iloc[self._n :]
         table.df.reset_index(drop=True, inplace=True)
         return table
 
@@ -200,12 +201,13 @@ class Header(Transformation):
         df = table.dataframe
         for name in df:
             column = df[name]
-            for i in range(len(column) // 2):
-                t = pd.api.types.infer_dtype(column.iloc[i + 1 :], skipna=True)
-                if "mixed" not in t:
-                    if (i,) not in arguments:
-                        arguments.append((i,))
-                    break
+            if "mixed" in pd.api.types.infer_dtype(column, skipna=True):
+                for i in range(1, len(column) // 2):
+                    t = pd.api.types.infer_dtype(column.iloc[i:], skipna=True)
+                    if "mixed" not in t:
+                        if (i,) not in arguments:
+                            arguments.append((i,))
+                        break
         return arguments
 
     @classmethod
@@ -238,31 +240,49 @@ class Header(Transformation):
 class Fill(Transformation):
     """Forward fill a column."""
 
+    threshold: float = 0.8
+
     def __init__(self, column: int):
         self._column = column
 
     def __call__(self, table: Table) -> pd.DataFrame:
         table = copy(table)
-        table.df.iloc[:, self._column].replace([Cell(pd.NA)], np.nan, inplace=True)
-        table.df.iloc[:, self._column].ffill(inplace=True)
+        table.df.iloc[:, self._column] = (
+            table.df.iloc[:, self._column].replace([Cell(pd.NA)], np.nan).ffill()
+        )
         return table
 
     @classmethod
     def arguments(cls, table: Table) -> List[Tuple[int]]:
+        """Look for columns to fill.
+
+        Following requirements for filling a table.
+
+         * Containing at least a percentage of empty values.
+         * Containing all unique elements.
+
+        """
         arguments = list()
-        for i in range(len(table.df.columns)):
-            if any(not v for v in table.df.iloc[:, i]):
+        for i in range(table.width):
+            column = table[i]
+            values = column[column.map(bool)]
+            missing = len(values) / len(column)
+            if (
+                missing > 0
+                and missing < cls.threshold
+                and not values.duplicated().any()
+            ):
                 arguments.append((i,))
         return arguments
 
     def __str__(self):
-        return "ForwardFill({})".format(self._column)
+        return "Fill({})".format(self._column)
 
     def __repr__(self) -> str:
-        return "ForwardFill({})".format(repr(self._column))
+        return "Fill({})".format(repr(self._column))
 
     def __hash__(self):
-        return hash(("ForwardFill", self._column))
+        return hash(("Fill", self._column))
 
 
 class Fold(Transformation):
@@ -290,7 +310,13 @@ class Fold(Transformation):
         columns = table.df.columns.tolist()
         columns_value = columns[self._column1 : self._column2 + 1]
         columns_id = set(columns) - set(columns_value)
-        table.df = pd.melt(table.df, value_vars=columns_value, id_vars=columns_id)
+        table.df = pd.melt(
+            table.df,
+            value_vars=columns_value,
+            id_vars=columns_id,
+            var_name=[Cell("variable")],
+            value_name=Cell("value"),
+        )
         return table
 
     @classmethod

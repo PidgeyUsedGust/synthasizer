@@ -2,7 +2,7 @@
 from collections import Counter
 from typing import List, Dict, Any, Tuple
 from abc import ABC, abstractmethod, abstractclassmethod
-from pandas import Series, isna
+from pandas import isna
 from .table import Cell
 
 
@@ -26,13 +26,14 @@ class EmptyCondition(Condition):
 
     def __str__(self):
         return "EmptyCondition"
-    
+
     def __repr__(self) -> str:
         return "EmptyCondition()"
 
     @classmethod
-    def generate(cls, values: List[Cell]):
-        if any(isna(v.value) for v in values):
+    def generate(cls, values: List[Cell]) -> List[Condition]:
+        na = len(values) - sum(map(bool, values))
+        if na > 0 and na < len(values):
             return [cls()]
         return []
 
@@ -54,14 +55,17 @@ class StyleCondition(Condition):
     def generate(cls, values: List[Cell]) -> List[Tuple[str, Any]]:
         # generate candidates
         candidates = Counter()
+        total = 0
         for cell in values:
-            for key, value in cell.style.items():
-                candidates[(key, value)] += 1
+            if cell:
+                for key, value in cell.style.items():
+                    candidates[(key, value)] += 1
+                total += 1
         # generate properties
         styles = list()
         for property, count in candidates.items():
-            if count < len(values):
-                styles.append(property)
+            if count < total:
+                styles.append(StyleCondition(*property))
         return styles
 
     def __repr__(self) -> str:

@@ -9,6 +9,7 @@ class ReconstructionError:
     """Compute reconstruction error."""
 
     def __init__(self, table: Table):
+        self._table = table
         self._cells = Counter(table.cells)
         self._style = Counter()
         self._shape = Counter()
@@ -25,6 +26,10 @@ class ReconstructionError:
 
     def compute(self, table: Table) -> float:
         """Compute score."""
+        # if a color was removed, punish really hard
+        if table.n_colors < self._table.n_colors:
+            return 1
+        # else count value of removed cells
         removed = self._cells - Counter(table.cells)
         score = sum(self.score(cell) * count for cell, count in removed.items())
         return score / self._total

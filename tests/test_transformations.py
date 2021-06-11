@@ -20,13 +20,13 @@ def test_header_arguments():
     icecream = detect(wb["icecream"])[0]
     icecream_arguments = Header.arguments(icecream)
     assert len(icecream_arguments) == 1
-    assert (0,) in icecream_arguments
+    assert (1,) in icecream_arguments
     # test
     header = detect(wb["header"])[0]
     header_arguments = Header.arguments(header)
     assert len(header_arguments) == 2
-    assert (0,) in header_arguments
     assert (1,) in header_arguments
+    assert (2,) in header_arguments
 
 
 if __name__ == "__main__":

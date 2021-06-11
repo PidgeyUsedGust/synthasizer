@@ -5,6 +5,7 @@ applying transformations.
 """
 from copy import copy
 import itertools
+from openpyxl.cell import cell
 import pandas as pd
 import numpy as np
 from typing import List, Any, Optional, Dict, Tuple
@@ -132,13 +133,17 @@ class Table:
     @property
     def color_df(self) -> pd.DataFrame:
         """Colors as dataframe."""
-        return self.df.applymap(lambda cell: cell.color)
+        df = self.df.applymap(lambda cell: cell.color)
+        if self.header:
+            df.columns = [c.color for c in self.df.columns]
+        else:
+            df.columns = [0 for _ in self.df.columns]
+        return df
 
     @property
-    def color_dict(self) -> Dict[Tuple[int, int], int]:
-        """Colors as a dictionary."""
-        indices = zip(*np.where(self.color_df > 0))
-        return {(y, x): self.df.iloc[y, x].color for (y, x) in indices}
+    def n_colors(self) -> int:
+        color_df = self.color_df
+        return len((set(color_df.values.ravel("K")) | set(color_df.columns)) - {0})
 
     @cached_property
     def column_types(self) -> List[str]:
@@ -152,7 +157,10 @@ class Table:
 
     @property
     def cells(self) -> List[Cell]:
-        return list(self.df.values.ravel("K"))
+        cells = list(self.df.values.ravel("K"))
+        if self.header:
+            cells.extend(self.df.columns)
+        return cells
 
     @property
     def height(self) -> int:
@@ -164,7 +172,7 @@ class Table:
 
     @property
     def header(self) -> bool:
-        return not isinstance(self.df.columns, pd.RangeIndex)
+        return all(isinstance(c, Cell) for c in self.df.columns)
 
     @classmethod
     def from_csv(cls, file: str, header: Optional[int] = None):
@@ -201,6 +209,9 @@ class Table:
 
     def __repr__(self):
         return str(self.df)
+
+    def __hash__(self) -> int:
+        return hash(self.dataframe.values.tobytes())
 
 
 na_values = {

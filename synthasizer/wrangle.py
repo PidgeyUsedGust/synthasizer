@@ -2,7 +2,11 @@ from abc import ABC, abstractmethod
 from heapq import heappop, heappush
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Iterable, Tuple, Type
+from operator import attrgetter
+from typing import ByteString, Iterable, List, Optional, Iterable, Tuple, Type
+
+from numpy import can_cast
+from openpyxl.descriptors.base import Default
 from .error import ReconstructionError
 from .heuristics import Heuristic
 from .table import Table
@@ -26,6 +30,9 @@ class Program:
 
     def __str__(self) -> str:
         return "\n".join(map(str, self.transformations))
+
+    def __repr__(self) -> str:
+        return "[{}]".format(", ".join(map(str, self.transformations)))
 
     def extend(self, transformation: Transformation) -> "Program":
         """Extend program with a new transformation."""
@@ -61,6 +68,8 @@ class State:
     @property
     def kind(self) -> str:
         """Get name of the last applied transformation."""
+        if len(self.program.transformations) == 0:
+            return ""
         return self.program.transformations[-1].__class__.__name__
 
     def __lt__(self, other: "State") -> bool:
@@ -74,6 +83,12 @@ class Strategy(ABC):
     def __init__(self) -> None:
         self._queue: List[State] = list()
         self.reset()
+
+    def __len__(self) -> int:
+        return len(self._queue)
+
+    def empty(self) -> bool:
+        return len(self._queue) == 0
 
     def reset(self) -> None:
         self._queue.clear()
@@ -150,7 +165,7 @@ class VariedBeam(Beam):
             # update number of times it was seen
             seen[candidate.kind] += 1
             # seen enough unique ones
-            if len(unique) == self._width:
+            if len(unique) >= self._width * self._kinds:
                 break
         # update queue
         self._queue = unique + self._queue
@@ -168,49 +183,75 @@ class Greedy(Strategy):
 
 
 class VariedGreedy(Greedy):
-    """Greedy, but only keep a fixed number per kind."""
+    """Greedy, but only keep a fixed number of each kind."""
 
-    def __init__(self, kinds: int = 2) -> None:
+    def __init__(self, kinds: int = 1) -> None:
         super().__init__()
         self._kinds = kinds
 
     def push(self, candidates: List[State]) -> None:
-        return super().push(candidates)
+        unique = list()
+        seen = defaultdict(int)
+        for candidate in candidates[::-1]:
+            # check if the last applied transformation
+            # is not yet seen too often
+            if seen[candidate.kind] < self._kinds:
+                unique.append(candidate)
+            # update number of times it was seen
+            seen[candidate.kind] += 1
+        # update queue
+        super().push(unique)
 
 
 class Wrangler:
     """Main wrangler class."""
 
     def __init__(
-        self, language: Language, heuristic: Heuristic, strategy: Strategy = None
+        self,
+        language: Language,
+        heuristic: Heuristic,
+        strategy: Strategy = None,
+        max_depth: int = 4,
     ) -> None:
         self._language = language
         self._heuristic = heuristic
-        self._strategy = strategy or VariedGreedy(3)
+        self._strategy = strategy or VariedGreedy(kinds=3)
+        self._max_depth = max_depth
 
     def learn(self, table: Table) -> List[Program]:
         """Learn and rank wrangling programs."""
+        result = list()
+        seen = set()
         # initialise error
         error = ReconstructionError(table)
         # reset the strategy
         self._strategy.reset()
         self._strategy.push([State(0.0, Program(), table)])
-        while True:
+        while not self._strategy.empty():
             state = self._strategy.pop()
             candidates = self._language.candidates(state.table)
             # evaluate all tables
             states = list()
             for candidate in candidates:
-                # print(candidate)
                 new_table = candidate(state.table)
                 new_program = state.program.extend(candidate)
                 new_score = self._heuristic(new_table) - error(new_table)
-                states.append(State(new_score, new_program, new_table))
-                print(new_score, new_program)
-            # update the strategy with ranked new transformations
-            self._strategy.push(sorted(states, reverse=True))
-            # print(candidates)
-            break
+                if hash(new_table) not in seen:
+                    states.append(State(new_score, new_program, new_table))
+                    seen.add(hash(new_table))
+            # get best one
+            best = max(states, key=attrgetter("score"), default=state)
+            # perfect score, can stop
+            if best.score == 1:
+                return [best]
+            # best one worse than previous state,
+            # keep previous state and don't expand
+            elif best.score <= state.score:
+                result.append(state)
+            # found better table, expand
+            elif len(state.program.transformations) < self._max_depth:
+                self._strategy.push(sorted(states, reverse=True))
+        return result
 
     def wrangle(self, table: Table) -> Table:
         """Learn wrangling programs and apply the best one."""

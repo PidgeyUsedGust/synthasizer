@@ -12,6 +12,7 @@ All heuristics should return a score in [0, 1] to make
 it easy to combine them.
 
 """
+from synthasizer.utilities import nzs, transpose
 from typing import Counter, List, Optional
 import numpy as np
 from itertools import combinations
@@ -56,7 +57,6 @@ class WeightedHeuristic(Heuristic):
     def __call__(self, table: Table) -> float:
         scores = list()
         for i, heuristic in enumerate(self._heuristics):
-            # print(heuristic, heuristic(table))
             scores.append(self._weights[i] * heuristic(table))
         return len(self._heuristics) * np.mean(scores)
 
@@ -67,13 +67,22 @@ class ColorRowHeuristic(Heuristic):
     def __call__(self, table: Table) -> float:
         colors = table.color_df
         # get colors in each row
-        rows = colors.apply(set, axis=1).to_list()
-        if table.header:
-            rows.append(set(colors.columns))
+        rows = colors.apply(nzs, axis=1).tolist()
+        rows.extend(map(nzs, transpose(colors.columns)))
         # get all unique colors
         unique = set.union(*rows)
+        # no colors
+        if len(unique) == 0:
+            return 1.0
         # get score
         return max(map(len, rows)) / len(unique)
+
+
+class EmptyHeuristic(Heuristic):
+    """Consider global empty cells, rather than column based."""
+
+    def __call__(self, table: Table) -> float:
+        return table.df.applymap(bool).to_numpy(float).sum() / table.df.size
 
 
 class AggregatedHeuristic(Heuristic):
@@ -161,37 +170,40 @@ class ValueColumnHeuristic(ColumnHeuristic):
                     scores[i] = 1.0
             # mixed columns
             elif "mixed" in dtypes[i]:
-                ctypes = Counter(cell.dtype for cell in table[i])
-                _, n = ctypes.most_common(1)[0]
-                scores[i] = float(n) / table[i].map(bool).sum()
+                count = table[i].map(bool).sum()
+                if count == 0:
+                    scores[i] = 0
+                else:
+                    types = Counter(cell.dtype for cell in table[i] if cell)
+                    # _, n = types.most_common(1)[0]
+                    scores[i] = types.most_common(1)[0][1] / count
             # uniform number columns get a perfect score
             else:
                 scores[i] = 1.0
-            # print(table[i].to_list(), scores[i])
         return scores
 
 
-# class TypeColumnHeuristic(ColumnHeuristic):
-#     """Heuristic based on uniform types.
+class TypeColumnHeuristic(ColumnHeuristic):
+    """Heuristic based on uniform types.
 
-#     Computers uniformity of types for all mixed columns,
-#     and gives 1 in other columns.
+    Computers uniformity of types for all mixed columns,
+    and gives 1 in other columns.
 
-#     """
+    """
 
-#     def __call__(self, table: Table) -> np.ndarray:
-#         dtypes = table.column_types
-#         scores = np.zeros(table.width)
-#         for i in range(table.width):
-#             # mixed column, compute purity
-#             if "mixed" in dtypes:
-#                 ctypes = Counter(cell.dtype for cell in table[i])
-#                 _, n = ctypes.most_common(1)[0]
-#                 scores[i] = float(n) / table[i].table[i].map(bool).sum()
-#             # pure column
-#             else:
-#                 scores[i] = 1.0
-#         return scores
+    def __call__(self, table: Table) -> np.ndarray:
+        dtypes = table.column_types
+        scores = np.zeros(table.width)
+        for i in range(table.width):
+            # mixed column, compute purity
+            if "mixed" in dtypes[i]:
+                ctypes = Counter(cell.dtype for cell in table[i])
+                _, n = ctypes.most_common(1)[0]
+                scores[i] = float(n) / table[i].map(bool).sum()
+            # pure column
+            else:
+                scores[i] = 1.0
+        return scores
 
 
 # def quality(table: pd.DataFrame, distance: Similarity):

@@ -7,6 +7,7 @@ verify_ssl = true
 ipykernel = "*"
 black = "*"
 jupyter = "*"
+pyinstrument = "*"
 
 [packages]
 synthasizer = {editable = true, path = "."}

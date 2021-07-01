@@ -3,11 +3,14 @@ Table wrapper with support for colorings as they
 need to be propagated through the table after
 applying transformations.
 """
-from copy import copy
+import collections
 import itertools
+from numpy.lib.arraysetops import isin
 from openpyxl.cell import cell
 import pandas as pd
 import numpy as np
+from copy import copy
+from collections import defaultdict
 from typing import List, Any, Optional, Dict, Tuple
 from functools import cached_property
 from operator import itemgetter
@@ -30,7 +33,8 @@ class Cell:
 
     def __init__(self, value: Optional[Any] = None, **kwargs):
         self.value = none(value)
-        self.style = dict(kwargs)
+        self.style = defaultdict(lambda: None)
+        self.style.update(kwargs)
         self.color = 0
 
     def same_style(self, other: "Cell") -> bool:
@@ -109,7 +113,12 @@ class Cell:
 
 
 class Table:
-    """Table wrapper."""
+    """Table wrapper with colors.
+
+    Colors are cell properties that are propagated
+    while wrangling, so we need a wrapper.
+
+    """
 
     def __init__(self, df: Optional[pd.DataFrame] = None):
         """Initialise table.
@@ -120,35 +129,98 @@ class Table:
         """
         self.df = pd.DataFrame()
         self.current_color = 1
+        self.header = False
         if df is not None:
             data = [[Cell(v) for v in row] for _, row in df.iterrows()]
             columns = [Cell(v) for v in df.columns]
             self.df = pd.DataFrame(data, columns=columns)
 
-    def color(self, x: int, y: int):
-        if not self.df.iloc[y, x].is_colored:
-            self.df.iloc[y, x].color = self.current_color
-            self.current_color += 1
+    def color(self, x: int, y: int, color: int = 0):
+        """Color one cell.
 
-    @property
+        Args:
+            x, y: Column and row of the cell to be colored.
+            color: Color to use. If zero, create a new color.
+
+        Returns:
+            A new table with this cell marked in a new color.
+
+        """
+        table = copy(self)
+        if not table.df.iloc[y, x].is_colored:
+            # no color is given, use the next color
+            if color == 0:
+                color = table.current_color
+                table.current_color += 1
+            table.df.iloc[y, x].color = color
+        return table
+
+    def color_all(self, positions: List[Tuple[int, int]], colors: List[int] = None):
+        """Color multiple cells.
+
+        Args:
+            positions: List of (x, y) positions of cells to
+                be colored.
+            colors: List of colors to assign to the cells.
+
+        Returns:
+            A new Table with all given cells marked in a
+            different color.
+
+        """
+        if colors is None:
+            colors = [0] * len(positions)
+        table = self
+        for i, position in enumerate(positions):
+            table = table.color(*position, color=colors[i])
+        return table
+
+    @cached_property
     def color_df(self) -> pd.DataFrame:
-        """Colors as dataframe."""
+        """Colors as dataframe.
+
+        Headers are encoded as a single index with
+        tuples of colors, as this makes working with
+        color dataframes significantly easier.
+
+        """
         df = self.df.applymap(lambda cell: cell.color)
-        if self.header:
-            df.columns = [c.color for c in self.df.columns]
+        if isinstance(self.df.columns, pd.MultiIndex):
+            df.columns = [tuple(cell.color for cell in c) for c in self.df.columns]
         else:
-            df.columns = [0 for _ in self.df.columns]
+            df.columns = [(c.color,) for c in self.df.columns]
         return df
 
-    @property
+    # def colors_in_column(self, i: int) -> Tuple[List[int], List[int]]:
+    #     """Get colors in column.
+
+    #     Returns:
+    #         A tuple of the colors in the header and the colors
+    #         in the rest of the column.
+
+    #     """
+    #     colors = self.color_df.columns[i]
+    #     colors.extend(self.color_df.iloc[:, i])
+    #     return colors
+
+    @cached_property
     def n_colors(self) -> int:
+        """Number of colors."""
         color_df = self.color_df
-        return len((set(color_df.values.ravel("K")) | set(color_df.columns)) - {0})
+        colors = set(color_df.values.ravel("k"))
+        if self.header:
+            colors_header = set(itertools.chain.from_iterable(color_df.columns))
+        else:
+            colors_header = set()
+        return len((colors | colors_header) - {0})
 
     @cached_property
     def column_types(self) -> List[str]:
         """List of the type of each column."""
-        return [pd.api.types.infer_dtype(self.dataframe[c]) for c in self.dataframe]
+        return [
+            pd.api.types.infer_dtype(self.dataframe.iloc[:, i])
+            for i in range(self.width)
+        ]
 
     @cached_property
     def dataframe(self) -> pd.DataFrame:
@@ -157,10 +229,14 @@ class Table:
 
     @property
     def cells(self) -> List[Cell]:
+        """Get all cells in the table."""
         cells = list(self.df.values.ravel("K"))
         if self.header:
-            cells.extend(self.df.columns)
-        return cells
+            if isinstance(self.df.columns, pd.MultiIndex):
+                cells.extend(itertools.chain.from_iterable(self.df.columns))
+            else:
+                cells.extend(self.df.columns)
+        return list(filter(bool, cells))
 
     @property
     def height(self) -> int:
@@ -169,10 +245,6 @@ class Table:
     @property
     def width(self) -> int:
         return len(self.df.columns)
-
-    @property
-    def header(self) -> bool:
-        return all(isinstance(c, Cell) for c in self.df.columns)
 
     @classmethod
     def from_csv(cls, file: str, header: Optional[int] = None):
@@ -183,8 +255,9 @@ class Table:
     def from_openpyxl(cls, data: List[List[PyxlCell]]):
         """Load from openpyxl cells."""
         cells = [[Cell.from_openpyxl(c) for c in row] for row in data]
+        index = [Cell(i) for i in range(len(cells[0]))]
         table = Table()
-        table.df = pd.DataFrame(cells)
+        table.df = pd.DataFrame(cells, columns=index)
         return table
 
     def __getitem__(self, i):
@@ -202,6 +275,8 @@ class Table:
     def __copy__(self):
         new = Table()
         new.df = self.df.applymap(copy)
+        new.current_color = self.current_color
+        new.header = self.header
         return new
 
     def __str__(self):

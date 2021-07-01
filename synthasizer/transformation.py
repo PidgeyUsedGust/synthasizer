@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod, abstractclassmethod
 from copy import copy
-from typing import List, Tuple, Any, Union
+from typing import Callable, List, Tuple, Any, Union, Optional, Type, Iterable
 from collections import Counter
 import numpy as np
 import pandas as pd
 from .conditions import Condition, EmptyCondition, StyleCondition
 from .table import Table, Cell
+from .utilities import duplicates, nzs
 
 
 Label = Union[int, str, Cell]
@@ -170,6 +171,7 @@ class Header(Transformation):
         table.df.columns = columns
         table.df = table.df.iloc[self._n :]
         table.df.reset_index(drop=True, inplace=True)
+        table.header = True
         return table
 
     @classmethod
@@ -248,8 +250,12 @@ class Fill(Transformation):
     def __call__(self, table: Table) -> pd.DataFrame:
         table = copy(table)
         table.df.iloc[:, self._column] = (
-            table.df.iloc[:, self._column].replace([Cell(pd.NA)], np.nan).ffill()
+            table.df.iloc[:, self._column]
+            .replace([Cell(pd.NA)], np.nan)
+            .ffill()
+            .fillna(Cell(None))
         )
+
         return table
 
     @classmethod
@@ -294,6 +300,13 @@ class Fold(Transformation):
     """
 
     def __init__(self, column1: int, column2: int):
+        """
+
+        Args:
+            column1, column2: Indices of columns between
+                which should be folded.
+
+        """
         self._column1 = column1
         self._column2 = column2
 
@@ -301,15 +314,44 @@ class Fold(Transformation):
         return hash(("Fold", self._column1, self._column2))
 
     def __call__(self, table: Table) -> Table:
-        """
+        """Custom Fold implementation.
 
-        Reuse as much of `pd.melt` as possible.
+        Supports duplicate columns outside of the
+        folding range.
+
+        """
+        # slice out block of values to be folded
+        block = table.df.iloc[:, self._column1 : self._column2 + 1]
+        # past them one after another
+        val = pd.DataFrame(block.values.reshape((-1, 1)), columns=[Cell("value")])
+        var = pd.DataFrame(
+            np.tile(
+                table.df.columns[self._column1 : self._column2 + 1].values, table.height
+            ),
+            columns=[Cell("variable")],
+        )
+        # before and after pieces
+        idx = table.df.index.repeat(self._column2 - self._column1 + 1)
+        before = table.df.iloc[:, : self._column1].loc[idx].reset_index(drop=True)
+        after = table.df.iloc[:, self._column2 + 1 :].loc[idx].reset_index(drop=True)
+        # make new table
+        table = copy(table)
+        table.df = pd.concat((before, var, val, after), axis=1).reset_index(drop=True)
+        return table
+
+    def __call__old(self, table: Table) -> Table:
+        """Fold columns.
+
+        Reuse as much of `pd.melt` as possible,
+        which requires to add a new column to
+        ensure duplicates aren't complained about.
 
         """
         table = copy(table)
         columns = table.df.columns.tolist()
         columns_value = columns[self._column1 : self._column2 + 1]
-        columns_id = set(columns) - set(columns_value)
+        columns_id = [column for column in columns if column not in columns_value]
+        # get mapping and inverse
         table.df = pd.melt(
             table.df,
             value_vars=columns_value,
@@ -318,6 +360,36 @@ class Fold(Transformation):
             value_name=Cell("value"),
         )
         return table
+
+    @classmethod
+    def get_mapping(
+        cls,
+        columns: List[Cell],
+    ) -> Tuple[Callable[[Cell], Cell], Callable[[Cell], Cell]]:
+        """Return two mappings.
+
+        Returns:
+            Two cell -> cell functions, one for deduplicating
+            and one for restoring.
+
+        """
+
+        duplicated = duplicates(columns)
+        m = {id(d): Cell("!{}".format(i)) for i, d in enumerate(duplicated)}
+        i = {v: k for k, v in m.items()}
+
+        def mapping(cell: Cell) -> Cell:
+            i = id(cell)
+            if i in m:
+                return m[id(cell)]
+            return cell
+
+        def inverse(cell: Cell) -> Cell:
+            if cell in i:
+                return i[cell]
+            return cell
+
+        return mapping, inverse
 
     @classmethod
     def arguments(cls, table: Table) -> List[Tuple[int, int]]:
@@ -335,28 +407,27 @@ class Fold(Transformation):
             return []
         # else, find the candidates
         arguments = list()
-        color = table.color_df
-        types = table.column_types
         # initial position
-        a = next(i for i, t in enumerate(types) if "mixed" not in t)
-        b = a
-        # get set of colors
-        colors = set(color.iloc[:, a].unique())
+        a, b = 0, 0
+        # get the colors
+        colors_header = nzs(table.color_df.columns[a])
+        colors_table = nzs(table.color_df.iloc[:, a])
         while b < table.width - 1:
             b += 1
-            colors.update(color.iloc[:, b].unique())
-            # if mixed, look for next clean type
-            if "mixed" in types[b]:
-                a = next(
-                    i + b for i, t in enumerate(types[b + 1 :]) if "mixed" not in t
-                )
-                b = a
-            # some other criterium invalidated
-            elif len(colors) > 2 or types[a] != types[b]:
+            colors_header.update(table.color_df.columns[b])
+            colors_table.update(table.color_df.iloc[:, b])
+            # check if range became invalid
+            if (
+                len(colors_table) > 1
+                or len(colors_header) > 1
+                or len(colors_header & colors_table) > 0
+                or table.column_types[a] != table.column_types[b]
+                or "mixed" in table.column_types[a]
+            ):
                 a = b
-                colors = set(color.iloc[:, a].unique())
-            # valid argument
-            else:
+                colors_header = nzs(table.color_df.columns[a])
+                colors_table = nzs(table.color_df.iloc[:, a])
+            elif b > a:
                 arguments.append((a, b))
         return arguments
 
@@ -371,16 +442,29 @@ class Stack(Transformation):
     """Stack a range of column."""
 
     def __init__(self, column1: int, column2: int, interval: int):
-        self._column1 = column1
-        self._column2 = column2
-        self._interval = interval
+        self._c1 = column1
+        self._c2 = column2
+        self._dx = interval
 
     def __call__(self, table: Table) -> Table:
-        """ """
+        """Build new table by stacking manually."""
+        tostack = [
+            table.df.iloc[:, self._c1 + i : self._c1 + i + self._dx]
+            for i in range(0, self._c2 - self._c1, self._dx)
+        ]
+        # print(tostack)
+        n = len(tostack)
+        # build parts
+        left = pd.concat([table.df.iloc[:, : self._c1]] * n, axis=0)
+        middle = pd.concat(tostack)
+        right = pd.concat([table.df.iloc[:, self._c2 :]] * n, axis=0)
+        # combine
+        table = copy(table)
+        table.df = pd.concat((left, middle, right), axis=1).reset_index(drop=True)
         return table
 
     @classmethod
-    def arguments(cls, table: Table) -> List[Tuple[int, int]]:
+    def arguments(cls, table: Table) -> List[Tuple[int, int, int]]:
         """Get stack arguments.
 
         Look for a range (a, b) of columns and an
@@ -388,59 +472,158 @@ class Stack(Transformation):
         each column that gets stacked has the
         same dtype and style.
 
+        If headers are present, they need to be the same.
+
         """
-        return table
+        if table.header:
+            return cls.arguments_header(table)
+        return list()
+
+    @classmethod
+    def arguments_header(cls, table: Table) -> List[Tuple[int, int, int]]:
+        """Arguments if header.
+
+        Look for headers that can be stacked.
+
+        """
+        results = list()
+        columns = table.df.columns.tolist()
+        # loop over number of columns to stack
+        for n in range(2, len(columns) // 2):
+            # loop over initial positions
+            i = 0
+            while i < (len(columns) - 2 * n):
+                # loop over possible ending positions
+                for j in reversed(range(i + 2 * n, len(columns) + 1, n)):
+                    header = {tuple(columns[a : a + n]) for a in range(i, j - n + 1, n)}
+                    # if header can be stacked, check if can't be stacked further
+                    if len(header) == 1:
+                        new = next(iter(header))
+                        if not _has_pattern(new):
+                            results.append((i, j, n))
+                        i += j
+                i += 1
+        return results
 
     def __hash__(self):
-        return hash(("Stack", self._column1, self._column2, self._interval))
+        return hash(("Stack", self._c1, self._c2, self._dx))
 
     def __str__(self):
-        return "Stack({}, {}, {})".format(self._column1, self._column2, self._interval)
+        return "Stack({}, {}, {})".format(self._c1, self._c2, self._dx)
 
     def __repr__(self):
         return "Stack({}, {}, {})".format(
-            repr(self._column1), repr(self._column2), repr(self._interval)
+            repr(self._c1), repr(self._c2), repr(self._dx)
         )
 
 
-class DivideAndFill(Transformation):
-    """Divide and forward fill.
+# class DivideAndFill(Transformation):
+#     """Divide and forward fill.
 
-    Split on having different values for a property.
+#     Split on having different values for a property.
 
-    Divides the column in place.
+#     Divides the column in place.
 
-    """
+#     """
 
-    def __init__(self, column: int, on: str = "dtype"):
-        self._column = column
-        self._on = on
+#     def __init__(self, column: int, on: str = "dtype"):
+#         self._column = column
+#         self._on = on
+
+#     def __call__(self, table: Table) -> Table:
+#         # use divide
+#         divided = Divide(self._column, self._on)(table)
+#         # compute number of divided
+#         b = self._column
+#         e = self._column + (divided.width - table.width) + 1
+#         # forward fill the divided columns
+#         divided.df.iloc[:, b:e] = (
+#             divided.df.iloc[:, b:e]
+#             .replace([Cell(None)], np.nan)
+#             .ffill()
+#             .fillna(Cell(None))
+#         )
+#         return divided
+
+#     @classmethod
+#     def arguments(cls, table: Table) -> List[Tuple[int, str]]:
+#         """Arguments exactly the same as divide."""
+#         return Divide.arguments(table)
+
+#     def __hash__(self) -> int:
+#         return hash(("DivideAndFill", self._column, self._on))
+
+#     def __str__(self) -> str:
+#         return "DivideAndFill({}, {})".format(self._column, self._on)
+
+#     def __repr__(self) -> str:
+#         return "DivideAndFill({}, {})".format(repr(self._column), repr(self._on))
+
+
+class Language:
+    """Transformation language."""
+
+    def __init__(
+        self, transformations: Optional[List[Type[Transformation]]] = None
+    ) -> None:
+        self._transformations = transformations or list()
+
+    def candidates(self, table: Table) -> List[Transformation]:
+        """Get transformations that can be applied."""
+        candidates = list()
+        for transformation in self._transformations:
+            arguments = transformation.arguments(table)
+            for argument in arguments:
+                candidates.append(transformation(*argument))
+        return candidates
+
+
+class Program:
+    """Transformation program."""
+
+    def __init__(self, transformations: Iterable[Transformation] = []) -> None:
+        self.transformations: Tuple[Transformation] = tuple(transformations)
 
     def __call__(self, table: Table) -> Table:
-        # use divide
-        divided = Divide(self._column, self._on)(table)
-        # compute number of divided
-        b = self._column
-        e = self._column + (divided.width - table.width) + 1
-        # forward fill the divided columns
-        divided.df.iloc[:, b:e] = (
-            divided.df.iloc[:, b:e]
-            .replace([Cell(None)], np.nan)
-            .ffill()
-            .fillna(Cell(None))
-        )
-        return divided
+        """Apply to a table."""
+        for transformation in self.transformations:
+            table = transformation(table)
+        return table
 
-    @classmethod
-    def arguments(cls, table: Table) -> List[Tuple[int, str]]:
-        """Arguments exactly the same as divide."""
-        return Divide.arguments(table)
+    def __len__(self) -> int:
+        return len(self.transformations)
 
     def __hash__(self) -> int:
-        return hash(("DivideAndFill", self._column, self._on))
+        return hash(self.transformations)
 
     def __str__(self) -> str:
-        return "DivideAndFill({}, {})".format(self._column, self._on)
+        return "\n".join(map(str, self.transformations))
 
     def __repr__(self) -> str:
-        return "DivideAndFill({}, {})".format(repr(self._column), repr(self._on))
+        return "[{}]".format(", ".join(map(str, self.transformations)))
+
+    def __eq__(self, other: "Program") -> bool:
+        return self.transformations == other.transformations
+
+    def extend(self, transformation: Transformation) -> "Program":
+        """Extend program with a new transformation."""
+        return Program((*self.transformations, transformation))
+
+    @property
+    def python(self) -> str:
+        """Convert to Python code."""
+        program = "x"
+        for transformation in self.transformations:
+            program = "{}({})".format(repr(transformation), program)
+        return program
+
+
+def _has_pattern(l: List[Any]) -> bool:
+    """Check if a list consists of a pattern."""
+    for i in range(2, len(l) // 2 + 1):
+        if len(l) % i == 0:
+            p = l[:i]
+            n = len(l) // i
+            if p * n == l:
+                return True
+    return False

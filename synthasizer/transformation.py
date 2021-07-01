@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from .conditions import Condition, EmptyCondition, StyleCondition
 from .table import Table, Cell
-from .utilities import duplicates, nzs
+from .utilities import duplicates, nzs, infer_types
 
 
 Label = Union[int, str, Cell]
@@ -71,7 +71,7 @@ class Divide(Transformation):
 
     """
 
-    def __init__(self, column: int, on: str = "dtype"):
+    def __init__(self, column: int, on: str = "datatype"):
         self._column = column
         self._on = on
 
@@ -91,16 +91,16 @@ class Divide(Transformation):
 
     @classmethod
     def arguments(cls, table: Table) -> List[Tuple[int, str]]:
-        return list(set(cls.arguments_dtype(table) + cls.arguments_style(table)))
+        return list(set(cls.arguments_datatype(table) + cls.arguments_style(table)))
 
     @classmethod
-    def arguments_dtype(cls, table: Table) -> List[Tuple[int, str]]:
+    def arguments_datatype(cls, table: Table) -> List[Tuple[int, str]]:
         arguments = list()
         for i in range(table.width):
-            types = set(c.dtype for c in table[i])
+            types = set(c.datatype for c in table[i])
             types.discard("empty")
             if len(types) > 1:
-                arguments.append((i, "dtype"))
+                arguments.append((i, "datatype"))
         return arguments
 
     @classmethod
@@ -200,12 +200,12 @@ class Header(Transformation):
 
         """
         arguments = list()
-        df = table.dataframe
-        for name in df:
-            column = df[name]
-            if "mixed" in pd.api.types.infer_dtype(column, skipna=True):
+        for i in range(table.width):
+            column = table[i]
+            column_types = [cell.datatype for cell in column]
+            if "mixed" in infer_types(column_types):
                 for i in range(1, len(column) // 2):
-                    t = pd.api.types.infer_dtype(column.iloc[i:], skipna=True)
+                    t = infer_types(column_types[i:])
                     if "mixed" not in t:
                         if (i,) not in arguments:
                             arguments.append((i,))

@@ -12,15 +12,13 @@ All heuristics should return a score in [0, 1] to make
 it easy to combine them.
 
 """
-from synthasizer.utilities import nzs, transpose
-from typing import Counter, List, Optional
 import numpy as np
+from typing import Counter, List, Optional
 from itertools import combinations
 from abc import ABC, abstractmethod
-
-from numpy.lib.arraysetops import unique
 from .similarity import CellSimilarity, CompressedSimilarity
-from .table import Table
+from .table import Table, Cell
+from .utilities import nzs, transpose
 
 
 class Heuristic(ABC):
@@ -82,7 +80,7 @@ class EmptyHeuristic(Heuristic):
     """Consider global empty cells, rather than column based."""
 
     def __call__(self, table: Table) -> float:
-        return table.df.applymap(bool).to_numpy(float).sum() / table.df.size
+        return (table.df != Cell(None)).values.sum() / table.df.size
 
 
 class AggregatedHeuristic(Heuristic):
@@ -197,7 +195,7 @@ class TypeColumnHeuristic(ColumnHeuristic):
         for i in range(table.width):
             # mixed column, compute purity
             if "mixed" in dtypes[i]:
-                ctypes = Counter(cell.dtype for cell in table[i])
+                ctypes = Counter(cell.datatype for cell in table[i])
                 _, n = ctypes.most_common(1)[0]
                 scores[i] = float(n) / table[i].map(bool).sum()
             # pure column

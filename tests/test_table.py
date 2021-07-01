@@ -1,5 +1,6 @@
 import openpyxl
 from collections import Counter
+from synthasizer import table
 from synthasizer.table import Table, detect
 from synthasizer.transformation import *
 
@@ -45,9 +46,6 @@ def test_cells():
     assert Counter(table.cells) == Counter(header3.cells)
     nurse = get_nurse()
     after = Delete(3, EmptyCondition())(Fill(1)(Stack(1, 29, 4)(Header(1)(nurse))))
-    print(after.header)
-    print(repr(after.df.columns[2]))
-    print(after.cells)
 
 
 def test_copy():
@@ -68,12 +66,16 @@ def test_style():
 def test_types():
     table = get_icecream()
     assert "string" in table.column_types
-    assert "mixed-integer" in table.column_types
+    assert "mixed-integer-string" in table.column_types
     header = Header(1)(table)
     assert "mixed-integer" not in header.column_types
     assert "integer" in header.column_types
     header2 = Header(2)(table)
     assert header.column_types == header2.column_types
+    # test empty columns
+    delete = Delete(2, EmptyCondition())(get_nurse())
+    assert "empty" in delete.column_types
+    assert "mixed-" not in delete.column_types
 
 
 if __name__ == "__main__":

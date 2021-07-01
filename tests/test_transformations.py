@@ -38,6 +38,19 @@ def test_header_arguments():
     assert (2,) in header_arguments
 
 
+# def test_divide():
+#     nurse = get_nurse()
+#     inter =  Divide(18, dtype)(Delete(2, EmptyCondition)(nurse))
+
+
+def test_divide_arguments():
+    nurse = get_nurse()
+    inter = Delete(2, EmptyCondition())(nurse)
+    # print(Divide.arguments(inter))
+    # print(inter)
+    # print(Divide())
+
+
 def test_fill():
     # load nurse and check for empty cells
     nurse = get_nurse()
@@ -94,8 +107,11 @@ def test_fold_arguments_nurse():
 
 
 def test_delete_arguments():
-    nurse = Header(1)(get_nurse())
-    print(Delete.arguments(nurse))
+    nurse = get_nurse()
+    header = Header(1)(nurse)
+    # print(nurse)
+    # print(Delete.arguments(nurse))
+    # print(Delete.arguments(nurse))
 
 
 if __name__ == "__main__":
@@ -107,3 +123,4 @@ if __name__ == "__main__":
     test_fold_arguments_icecream()
     test_fold_arguments_nurse()
     test_delete_arguments()
+    test_divide_arguments()

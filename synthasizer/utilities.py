@@ -1,4 +1,5 @@
 from typing import Any, Iterable, List, Set, TypeVar
+import typing
 
 T = TypeVar("T")
 
@@ -38,3 +39,19 @@ def duplicates(l: Iterable[T]) -> List[T]:
             duplicates.append(x)
         seen[x] = 1
     return duplicates
+
+
+def infer_types(types: Iterable[str]) -> str:
+    """Infer type from a list of individual types.
+
+    Args:
+        types: List of individual types.
+
+    """
+    unique = sorted(set(types) - {"empty"})
+    # only one type
+    if len(unique) == 0:
+        return "empty"
+    if len(unique) == 1:
+        return unique[0]
+    return "mixed-{}".format("-".join(unique))

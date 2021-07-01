@@ -1,3 +1,4 @@
+from synthasizer import table
 from synthasizer.error import ContentReconstructionError
 from synthasizer.conditions import EmptyCondition
 from tests.test_table import get_nurse
@@ -32,6 +33,11 @@ def test_typecolumn():
     print(heuristic(table))
 
 
+def test_empty():
+    table = get_nurse()
+    print(EmptyHeuristic()(table))
+
+
 def test_nurse():
     program = Program(
         [Header(1), Stack(1, 29, 4), Fill(1), Delete(3, EmptyCondition())]
@@ -55,11 +61,21 @@ def test_nurse_color():
         [Header(1), Stack(1, 29, 4), Fill(1), Delete(3, EmptyCondition())]
     )
     inter = program(nurse)
-    print(inter.color_df)
-    print(Fold.arguments(inter))
+    heuristic = WeightedHeuristic(
+        [
+            EmptyHeuristic(),
+            AggregatedHeuristic(TypeColumnHeuristic()),
+            ColorRowHeuristic(),
+        ],
+        weights=[1.0, 1.0, 0.1],
+    )
+    print(heuristic(nurse))
+    print(heuristic(inter))
 
 
 if __name__ == "__main__":
+    test_empty()
     # test_colorrow()
     test_typecolumn()
-    # test_nurse_color()
+    # test_nurse()
+    test_nurse_color()

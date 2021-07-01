@@ -3,17 +3,17 @@ Table wrapper with support for colorings as they
 need to be propagated through the table after
 applying transformations.
 """
-import collections
 import itertools
-from numpy.lib.arraysetops import isin
-from openpyxl.cell import cell
+
+from pandas.io.formats.format import SeriesFormatter
+from synthasizer.utilities import infer_types
 import pandas as pd
 import numpy as np
 from copy import copy
 from collections import defaultdict
-from typing import List, Any, Optional, Dict, Tuple
+from typing import List, Any, Optional, Tuple
 from functools import cached_property
-from operator import itemgetter
+from operator import attrgetter, itemgetter
 from openpyxl.cell.cell import Cell as PyxlCell
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.utils import get_column_letter
@@ -48,19 +48,21 @@ class Cell:
             return False
         return all(self.style[k] == v for k, v in other.style.items())
 
-    @property
-    def dtype(self) -> str:
+    @cached_property
+    def datatype(self) -> str:
         return pd.api.types.infer_dtype([self.value])
 
-    @property
-    def is_colored(self) -> bool:
-        return self.color > 0
+    def with_color(self, color: int) -> "Cell":
+        """Return cell with new color applied."""
+        cell = copy(self)
+        cell.color = color
+        return cell
 
-    def __getattr__(self, name: str):
-        if name in self.__dict__["style"]:
-            return self.__dict__["style"][name]
-        else:
-            raise AttributeError
+    # def __getattr__(self, name: str):
+    #     if name in self.__dict__["style"]:
+    #         return self.__dict__["style"][name]
+    #     else:
+    #         raise AttributeError
 
     def __eq__(self, other):
         return isinstance(other, Cell) and (self.value == other.value)
@@ -127,15 +129,15 @@ class Table:
             df: A pandas dataframe.
 
         """
-        self.df = pd.DataFrame()
+        self.df = pd.DataFrame(dtype=object)
         self.current_color = 1
         self.header = False
         if df is not None:
             data = [[Cell(v) for v in row] for _, row in df.iterrows()]
             columns = [Cell(v) for v in df.columns]
-            self.df = pd.DataFrame(data, columns=columns)
+            self.df = pd.DataFrame(data, columns=columns, dtype=object)
 
-    def color(self, x: int, y: int, color: int = 0):
+    def color(self, x: int, y: int, color: int = 0) -> "Table":
         """Color one cell.
 
         Args:
@@ -147,12 +149,11 @@ class Table:
 
         """
         table = copy(self)
-        if not table.df.iloc[y, x].is_colored:
-            # no color is given, use the next color
+        if table.df.iat[y, x].color == 0:
             if color == 0:
                 color = table.current_color
                 table.current_color += 1
-            table.df.iloc[y, x].color = color
+            table.df.iat[y, x] = table.df.iat[y, x].with_color(color)
         return table
 
     def color_all(self, positions: List[Tuple[int, int]], colors: List[int] = None):
@@ -184,7 +185,8 @@ class Table:
         color dataframes significantly easier.
 
         """
-        df = self.df.applymap(lambda cell: cell.color)
+        # df = self.df.applymap(lambda cell: cell.color)
+        df = pd.DataFrame(np.vectorize(attrgetter("color"))(self.df.values))
         if isinstance(self.df.columns, pd.MultiIndex):
             df.columns = [tuple(cell.color for cell in c) for c in self.df.columns]
         else:
@@ -218,13 +220,18 @@ class Table:
     def column_types(self) -> List[str]:
         """List of the type of each column."""
         return [
-            pd.api.types.infer_dtype(self.dataframe.iloc[:, i])
+            infer_types(cell.datatype for cell in self.df.iloc[:, i] if cell)
             for i in range(self.width)
         ]
 
     @cached_property
     def dataframe(self) -> pd.DataFrame:
-        """Unwrapped dataframe."""
+        """Unwrapped dataframe.
+
+        Warning, this method is slow. Use
+        it sparingly.
+
+        """
         return self.df.applymap(lambda cell: cell.value).convert_dtypes()
 
     @property
@@ -274,7 +281,7 @@ class Table:
 
     def __copy__(self):
         new = Table()
-        new.df = self.df.applymap(copy)
+        new.df = self.df.copy()
         new.current_color = self.current_color
         new.header = self.header
         return new
@@ -286,7 +293,7 @@ class Table:
         return str(self.df)
 
     def __hash__(self) -> int:
-        return hash(self.dataframe.values.tobytes())
+        return hash(self.df.values.tobytes())
 
 
 na_values = {

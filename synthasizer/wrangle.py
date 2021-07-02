@@ -1,5 +1,7 @@
+from time import time
 from operator import attrgetter
-from typing import List, Optional, Type
+from typing import List, Optional
+from multiprocessing import Pool
 from .error import ContentReconstructionError, ReconstructionError
 from .heuristics import Heuristic
 from .table import Table
@@ -17,7 +19,8 @@ class Wrangler:
         heuristic: Heuristic,
         error: Optional[ReconstructionError] = None,
         strategy: Optional[Strategy] = None,
-        max_depth: Optional[int] = 5,
+        max_depth: int = 5,
+        verbose: bool = False,
     ) -> None:
         """
 
@@ -31,32 +34,30 @@ class Wrangler:
         self._error = error or ContentReconstructionError()
         self._strategy = strategy or Astar()
         self._max_depth = max_depth
+        self._verbose = verbose
 
     def learn(self, table: Table) -> List[Program]:
         """Learn and rank wrangling programs."""
         result = list()
         seen = set()
-        # initialise error
+        pool = Pool()
         self._error.initialise(table)
-        # reset the strategy
         self._strategy.reset()
         self._strategy.push([State(0.0, Program(), table)])
         iterations = 0
         while not self._strategy.empty():
             state = self._strategy.pop()
             print(repr(state.program), state.score)
-            candidates = self._language.candidates(state.table)
-            # evaluate all tables
+            transformations = self._language.candidates(state.table)
             states = list()
-            for candidate in candidates:
+            for candidate in transformations:
                 new_table = candidate(state.table)
-                new_program = state.program.extend(candidate)
-                print(repr(new_program), end=" -> ")
-                new_score = self._heuristic(new_table) - self._error(new_table)
-                print(new_score)
-                if hash(new_table) not in seen:
+                new_table_hash = hash(new_table)
+                if new_table_hash not in seen:
+                    new_program = state.program.extend(candidate)
+                    new_score = self.rate(new_table)
                     states.append(State(new_score, new_program, new_table))
-                    seen.add(hash(new_table))
+                    seen.add(new_table_hash)
             # get best one
             best = max(states, key=attrgetter("score"), default=state)
             # perfect score, can stop
@@ -68,8 +69,7 @@ class Wrangler:
             else:
                 result.append(state)
             iterations += 1
-            # print(len(self._strategy._queue))
-            # if iterations == 10:
+            # if iterations == 2:
             #     break
             # break
         return result
@@ -77,3 +77,6 @@ class Wrangler:
     def wrangle(self, table: Table) -> Table:
         """Learn wrangling programs and apply the best one."""
         pass
+
+    def rate(self, table: Table) -> float:
+        return self._heuristic(table) - self._error(table)

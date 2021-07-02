@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod, abstractclassmethod
 from copy import copy
+from operator import attrgetter
 from typing import Callable, List, Tuple, Any, Union, Optional, Type, Iterable
 from collections import Counter
 import numpy as np
@@ -95,24 +96,32 @@ class Divide(Transformation):
 
     @classmethod
     def arguments_datatype(cls, table: Table) -> List[Tuple[int, str]]:
-        arguments = list()
+        ctypes = table.cell_types.T
+        result = list()
         for i in range(table.width):
-            types = set(c.datatype for c in table[i])
+            types = set(ctypes[i])
             types.discard("empty")
             if len(types) > 1:
-                arguments.append((i, "datatype"))
-        return arguments
+                result.append((i, "datatype"))
+        return result
 
     @classmethod
     def arguments_style(cls, table: Table) -> List[Tuple[int, str]]:
-        arguments = list()
+        values = (table.df.values != Cell(None)).T
+        styles = np.vectorize(cls.extract_style)(table.df.values).T
+        result = list()
         for i in range(table.width):
-            column = table[i]
-            for s in column[0].style:
-                styles = Counter(c.style[s] for c in column if c)
-                if len(styles) > 1:
-                    arguments.append((i, s))
-        return arguments
+            union = set.union(*styles[i][values[i]])
+            inter = set.intersection(*styles[i][values[i]])
+            for (k, _) in union - inter:
+                result.append((i, k))
+        return result
+
+    @classmethod
+    def extract_style(cls, cell: Cell) -> set[Tuple[str, Any]]:
+        if not cell:
+            return set()
+        return set(cell.style.items())
 
     def __str__(self) -> str:
         return "Divide({}, {})".format(self._column, self._on)
@@ -515,49 +524,6 @@ class Stack(Transformation):
         return "Stack({}, {}, {})".format(
             repr(self._c1), repr(self._c2), repr(self._dx)
         )
-
-
-# class DivideAndFill(Transformation):
-#     """Divide and forward fill.
-
-#     Split on having different values for a property.
-
-#     Divides the column in place.
-
-#     """
-
-#     def __init__(self, column: int, on: str = "dtype"):
-#         self._column = column
-#         self._on = on
-
-#     def __call__(self, table: Table) -> Table:
-#         # use divide
-#         divided = Divide(self._column, self._on)(table)
-#         # compute number of divided
-#         b = self._column
-#         e = self._column + (divided.width - table.width) + 1
-#         # forward fill the divided columns
-#         divided.df.iloc[:, b:e] = (
-#             divided.df.iloc[:, b:e]
-#             .replace([Cell(None)], np.nan)
-#             .ffill()
-#             .fillna(Cell(None))
-#         )
-#         return divided
-
-#     @classmethod
-#     def arguments(cls, table: Table) -> List[Tuple[int, str]]:
-#         """Arguments exactly the same as divide."""
-#         return Divide.arguments(table)
-
-#     def __hash__(self) -> int:
-#         return hash(("DivideAndFill", self._column, self._on))
-
-#     def __str__(self) -> str:
-#         return "DivideAndFill({}, {})".format(self._column, self._on)
-
-#     def __repr__(self) -> str:
-#         return "DivideAndFill({}, {})".format(repr(self._column), repr(self._on))
 
 
 class Language:

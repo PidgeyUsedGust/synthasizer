@@ -55,3 +55,7 @@ def infer_types(types: Iterable[str]) -> str:
     if len(unique) == 1:
         return unique[0]
     return "mixed-{}".format("-".join(unique))
+
+
+def nothing():
+    return None

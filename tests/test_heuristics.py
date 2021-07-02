@@ -8,7 +8,6 @@ from synthasizer.heuristics import (
     ColorRowHeuristic,
     EmptyHeuristic,
     AggregatedHeuristic,
-    Heuristic,
     TypeColumnHeuristic,
     ValueColumnHeuristic,
     WeightedHeuristic,
@@ -29,13 +28,13 @@ def test_colorrow():
 def test_typecolumn():
     table = get_icecream().color_all([(0, 1), (1, 1), (2, 1), (2, 0)])
     heuristic = TypeColumnHeuristic()
-    print(table)
-    print(heuristic(table))
+    # print(table)
+    # print(heuristic(table))
 
 
 def test_empty():
     table = get_nurse()
-    print(EmptyHeuristic()(table))
+    # print(EmptyHeuristic()(table))
 
 
 def test_nurse():
@@ -69,13 +68,13 @@ def test_nurse_color():
         ],
         weights=[1.0, 1.0, 0.1],
     )
-    print(heuristic(nurse))
-    print(heuristic(inter))
+    # print(heuristic(nurse))
+    # print(heuristic(inter))
 
 
 if __name__ == "__main__":
     test_empty()
-    # test_colorrow()
+    test_colorrow()
     test_typecolumn()
     # test_nurse()
     test_nurse_color()

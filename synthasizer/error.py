@@ -26,14 +26,14 @@ class ContentReconstructionError(ReconstructionError):
 
     def initialise(self, table: Table) -> None:
         super().initialise(table)
-        self._cells = Counter(table.cells)
+        self._cells = set(table.cells)
 
     def compute(self, table: Table) -> float:
         # if a color was removed, punish really hard
         if table.n_colors < self._table.n_colors:
             return 1.0
         # else count the number of cells that was removed
-        return len(set(self._cells) - set(table.cells)) / len(self._cells)
+        return len(self._cells - set(table.cells)) / len(self._cells)
 
 
 class MixedReconstructionError(ReconstructionError):

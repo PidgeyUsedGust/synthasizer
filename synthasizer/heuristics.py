@@ -65,7 +65,7 @@ class ColorRowHeuristic(Heuristic):
     def __call__(self, table: Table) -> float:
         colors = table.color_df
         # get colors in each row
-        rows = colors.apply(nzs, axis=1).tolist()
+        rows = np.apply_along_axis(nzs, 1, colors.values).tolist()
         rows.extend(map(nzs, transpose(colors.columns)))
         # get all unique colors
         unique = set.union(*rows)
@@ -190,15 +190,14 @@ class TypeColumnHeuristic(ColumnHeuristic):
     """
 
     def __call__(self, table: Table) -> np.ndarray:
+        ctypes = table.cell_types.T
         dtypes = table.column_types
         scores = np.zeros(table.width)
         for i in range(table.width):
-            # mixed column, compute purity
             if "mixed" in dtypes[i]:
-                ctypes = Counter(cell.datatype for cell in table[i])
-                _, n = ctypes.most_common(1)[0]
-                scores[i] = float(n) / table[i].map(bool).sum()
-            # pure column
+                non_empty = ctypes[i] != "empty"
+                _, counts = np.unique(ctypes[i][non_empty], return_counts=True)
+                scores[i] = np.max(counts) / np.count_nonzero(non_empty)
             else:
                 scores[i] = 1.0
         return scores

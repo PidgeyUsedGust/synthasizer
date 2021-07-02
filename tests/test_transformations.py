@@ -1,3 +1,4 @@
+from numpy.lib.index_tricks import diag_indices
 import openpyxl
 from synthasizer.wrangle import State
 from synthasizer.table import detect
@@ -46,7 +47,14 @@ def test_header_arguments():
 def test_divide_arguments():
     nurse = get_nurse()
     inter = Delete(2, EmptyCondition())(nurse)
+    # print(Divide.arguments(nurse))
     # print(Divide.arguments(inter))
+
+    icecream = get_icecream()
+    icecream_arguments = Divide.arguments(icecream)
+    print(icecream_arguments)
+    assert (1, "bold") in icecream_arguments
+    assert (0, "bold") not in icecream_arguments
     # print(inter)
     # print(Divide())
 

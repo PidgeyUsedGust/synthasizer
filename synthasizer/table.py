@@ -4,9 +4,7 @@ need to be propagated through the table after
 applying transformations.
 """
 import itertools
-
-from pandas.io.formats.format import SeriesFormatter
-from synthasizer.utilities import infer_types
+from openpyxl.cell import cell
 import pandas as pd
 import numpy as np
 from copy import copy
@@ -17,6 +15,7 @@ from operator import attrgetter, itemgetter
 from openpyxl.cell.cell import Cell as PyxlCell
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.utils import get_column_letter
+from synthasizer.utilities import infer_types, nothing
 
 
 class Cell:
@@ -33,7 +32,7 @@ class Cell:
 
     def __init__(self, value: Optional[Any] = None, **kwargs):
         self.value = none(value)
-        self.style = defaultdict(lambda: None)
+        self.style = defaultdict(nothing)
         self.style.update(kwargs)
         self.color = 0
 
@@ -185,25 +184,12 @@ class Table:
         color dataframes significantly easier.
 
         """
-        # df = self.df.applymap(lambda cell: cell.color)
         df = pd.DataFrame(np.vectorize(attrgetter("color"))(self.df.values))
         if isinstance(self.df.columns, pd.MultiIndex):
             df.columns = [tuple(cell.color for cell in c) for c in self.df.columns]
         else:
             df.columns = [(c.color,) for c in self.df.columns]
         return df
-
-    # def colors_in_column(self, i: int) -> Tuple[List[int], List[int]]:
-    #     """Get colors in column.
-
-    #     Returns:
-    #         A tuple of the colors in the header and the colors
-    #         in the rest of the column.
-
-    #     """
-    #     colors = self.color_df.columns[i]
-    #     colors.extend(self.color_df.iloc[:, i])
-    #     return colors
 
     @cached_property
     def n_colors(self) -> int:
@@ -217,12 +203,27 @@ class Table:
         return len((colors | colors_header) - {0})
 
     @cached_property
+    def cell_types(self) -> np.ndarray:
+        """Get the types of all cells as a numpy matrix.
+
+        Returns:
+            A two-dimensional matrix containing the typs
+            of each cell.
+
+        """
+        return np.vectorize(attrgetter("datatype"))(self.df.values)
+
+    @cached_property
     def column_types(self) -> List[str]:
-        """List of the type of each column."""
-        return [
-            infer_types(cell.datatype for cell in self.df.iloc[:, i] if cell)
-            for i in range(self.width)
-        ]
+        """Infer the type of each column.
+
+        Returns:
+            A list of length `self.width` with the
+            inferred type of each column. See
+            `utilities.infer_types` for more information.
+
+        """
+        return [infer_types(column) for column in self.cell_types.T]
 
     @cached_property
     def dataframe(self) -> pd.DataFrame:
@@ -237,13 +238,16 @@ class Table:
     @property
     def cells(self) -> List[Cell]:
         """Get all cells in the table."""
-        cells = list(self.df.values.ravel("K"))
+        cells = self.df.values.ravel("K")
+        cells = cells[cells != Cell(None)]
         if self.header:
             if isinstance(self.df.columns, pd.MultiIndex):
-                cells.extend(itertools.chain.from_iterable(self.df.columns))
+                cells_header = itertools.chain.from_iterable(self.df.columns)
             else:
-                cells.extend(self.df.columns)
-        return list(filter(bool, cells))
+                cells_header = self.df.columns
+            cells_header = list(filter(bool, cells_header))
+            cells = np.hstack((cells, cells_header))
+        return list(cells)
 
     @property
     def height(self) -> int:

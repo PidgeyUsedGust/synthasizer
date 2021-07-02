@@ -2,12 +2,10 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import List, Type, Dict
+
+from numpy import can_cast
 from synthasizer.transformation import Transformation, Program
 from synthasizer.table import Table
-
-
-Pattern = List[Type[Transformation]]
-"""Pattern of transformations."""
 
 
 @dataclass
@@ -198,6 +196,8 @@ class Junction(Strategy):
         self._width = width
 
     def push(self, candidates: List[State]) -> None:
+        # slice out best width candidates
+        candidates = candidates[-self._width :]
         # add best one to the end of the queue
         # to ensure depth first part
         self._queue.append(candidates[-1])
@@ -230,6 +230,12 @@ class Astar(Strategy):
     def rate(self, state: State) -> float:
         """Rate a state."""
         return state.score - (len(state.program) / 40)
+
+
+class Pattern:
+    """Pattern of transformations."""
+
+    pass
 
 
 class Prioritizer(Strategy):

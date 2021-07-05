@@ -451,22 +451,21 @@ class Stack(Transformation):
     """Stack a range of column."""
 
     def __init__(self, column1: int, column2: int, interval: int):
-        self._c1 = column1
-        self._c2 = column2
-        self._dx = interval
+        self._column1 = column1
+        self._column2 = column2
+        self._interval = interval
 
     def __call__(self, table: Table) -> Table:
         """Build new table by stacking manually."""
         tostack = [
-            table.df.iloc[:, self._c1 + i : self._c1 + i + self._dx]
-            for i in range(0, self._c2 - self._c1, self._dx)
+            table.df.iloc[:, self._column1 + i : self._column1 + i + self._interval]
+            for i in range(0, self._column2 - self._column1, self._interval)
         ]
-        # print(tostack)
         n = len(tostack)
         # build parts
-        left = pd.concat([table.df.iloc[:, : self._c1]] * n, axis=0)
+        left = pd.concat([table.df.iloc[:, : self._column1]] * n, axis=0)
         middle = pd.concat(tostack)
-        right = pd.concat([table.df.iloc[:, self._c2 :]] * n, axis=0)
+        right = pd.concat([table.df.iloc[:, self._column2 :]] * n, axis=0)
         # combine
         table = copy(table)
         table.df = pd.concat((left, middle, right), axis=1).reset_index(drop=True)
@@ -515,14 +514,14 @@ class Stack(Transformation):
         return results
 
     def __hash__(self):
-        return hash(("Stack", self._c1, self._c2, self._dx))
+        return hash(("Stack", self._column1, self._column2, self._interval))
 
     def __str__(self):
-        return "Stack({}, {}, {})".format(self._c1, self._c2, self._dx)
+        return "Stack({}, {}, {})".format(self._column1, self._column2, self._interval)
 
     def __repr__(self):
         return "Stack({}, {}, {})".format(
-            repr(self._c1), repr(self._c2), repr(self._dx)
+            repr(self._column1), repr(self._column2), repr(self._interval)
         )
 
 

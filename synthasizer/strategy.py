@@ -1,11 +1,11 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import List, Type, Dict
-
-from numpy import can_cast
-from synthasizer.transformation import Transformation, Program
+from typing import List, Dict
+from synthasizer import pattern
+from synthasizer.transformation import Program
 from synthasizer.table import Table
+from synthasizer.pattern import Pattern
 
 
 @dataclass
@@ -232,22 +232,36 @@ class Astar(Strategy):
         return state.score - (len(state.program) / 40)
 
 
-class Pattern:
-    """Pattern of transformations."""
-
-    pass
-
-
 class Prioritizer(Strategy):
-    """Manually prioritize specific transformations."""
+    """Manually prioritize specific transformations.
+
+    Whenever candidates are added, those that match
+    are added to a separate (greedy) queue, which
+    is depleted first.
+
+    """
 
     def __init__(self, base: Strategy, patterns: List[Pattern]) -> None:
         super().__init__()
         self._base = base
-        self._patterns = list()
+        self._patterns = patterns
+        self._main = Greedy()
 
     def push(self, candidates: List[State]) -> None:
-        # update the base
-        self._base.push(candidates)
-        # check patterns
-        # reorder based on patterns
+        # see which ones match
+        match = list()
+        other = list()
+        for candidate in candidates:
+            if any(pattern.match_end(candidate.program) for pattern in self._patterns):
+                match.append(candidate)
+            else:
+                other.append(candidate)
+        # update the strategies
+        self._base.push(other)
+        self._main.push(match)
+
+    def pop(self) -> State:
+        if not self._main.empty():
+            return self._main.pop()
+        else:
+            return self._base.pop()

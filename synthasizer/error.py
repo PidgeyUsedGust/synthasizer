@@ -33,7 +33,8 @@ class ContentReconstructionError(ReconstructionError):
         if table.n_colors < self._table.n_colors:
             return 1.0
         # else count the number of cells that was removed
-        return len(self._cells - set(table.cells)) / len(self._cells)
+        # return len(self._cells - set(table.cells)) / len(self._cells)
+        return max(0, 0.05 * len(self._cells - set(table.cells)))
 
 
 class MixedReconstructionError(ReconstructionError):

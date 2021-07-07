@@ -32,9 +32,9 @@ class Cell:
 
     def __init__(self, value: Optional[Any] = None, **kwargs):
         self.value = none(value)
+        self.color = 0
         self.style = defaultdict(nothing)
         self.style.update(kwargs)
-        self.color = 0
 
     def same_style(self, other: "Cell") -> bool:
         """Check if same style.
@@ -56,12 +56,6 @@ class Cell:
         cell = copy(self)
         cell.color = color
         return cell
-
-    # def __getattr__(self, name: str):
-    #     if name in self.__dict__["style"]:
-    #         return self.__dict__["style"][name]
-    #     else:
-    #         raise AttributeError
 
     def __eq__(self, other):
         return isinstance(other, Cell) and (self.value == other.value)
@@ -297,7 +291,8 @@ class Table:
         return str(self.df)
 
     def __hash__(self) -> int:
-        return hash(self.df.values.tobytes())
+        hash_header = pd.util.hash_pandas_object(self.df.columns)
+        return hash((self.df.values.tobytes(), hash_header.values.tobytes()))
 
 
 na_values = {

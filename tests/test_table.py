@@ -13,6 +13,10 @@ def get_nurse() -> Table:
     return detect(openpyxl.load_workbook("data/nurse.xlsx")["Sheet1"])[0]
 
 
+def get_nba() -> Table:
+    return detect(openpyxl.load_workbook("data/nba.xlsx")["Sheet1"])[0]
+
+
 def test_detect():
     tables = detect(openpyxl.load_workbook("data/icecream.xlsx")["icecream"])
     assert len(tables) == 2
@@ -78,6 +82,26 @@ def test_types():
     assert "mixed-" not in delete.column_types
 
 
+def test_hash():
+    ice = get_icecream()
+
+    d1 = Delete(2, EmptyCondition())(ice)
+    d2 = Delete(5, EmptyCondition())(ice)
+    assert hash(d1) == hash(d2)
+
+    f1 = Fill(0)(ice)
+    f2 = Fill(0)(ice)
+    assert hash(f1) == hash(f2)
+
+    f3 = Fold(2, 5)(ice)
+    f4 = Fold(2, 5)(ice)
+    assert hash(f3) == hash(f4)
+
+    d3 = Delete(3, StyleCondition("bold", True))(ice)
+    d4 = Header(1)(ice)
+    assert hash(d3) != hash(d4)
+
+
 if __name__ == "__main__":
     test_detect()
     test_copy()
@@ -86,3 +110,4 @@ if __name__ == "__main__":
     test_color()
     test_color_df()
     test_cells()
+    test_hash()

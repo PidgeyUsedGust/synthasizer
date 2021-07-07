@@ -1,3 +1,4 @@
+from tests.test_table import get_nba
 from numpy.lib.index_tricks import diag_indices
 import openpyxl
 from synthasizer.wrangle import State
@@ -39,24 +40,26 @@ def test_header_arguments():
     assert (2,) in header_arguments
 
 
-# def test_divide():
-#     nurse = get_nurse()
-#     inter =  Divide(18, dtype)(Delete(2, EmptyCondition)(nurse))
+def test_divide():
+    # nurse = get_nurse()
+    # inter =  Divide(18, dtype)(Delete(2, EmptyCondition)(nurse))
+    nba = Header(1)(get_nba())
+    divided = Divide(1, "bold")(nba)
+    assert nba.width < divided.width
 
 
 def test_divide_arguments():
+
     nurse = get_nurse()
     inter = Delete(2, EmptyCondition())(nurse)
-    # print(Divide.arguments(nurse))
-    # print(Divide.arguments(inter))
 
     icecream = get_icecream()
     icecream_arguments = Divide.arguments(icecream)
-    print(icecream_arguments)
     assert (1, "bold") in icecream_arguments
     assert (0, "bold") not in icecream_arguments
-    # print(inter)
-    # print(Divide())
+
+    nba = get_nba()
+    # print(Divide.arguments(Delete(1, StyleCondition("bold", True))(nba)))
 
 
 def test_fill():
@@ -120,6 +123,24 @@ def test_delete_arguments():
     # print(nurse)
     # print(Delete.arguments(nurse))
     # print(Delete.arguments(nurse))
+    nba = get_nba()
+    program = Program([Divide(1, "bold"), Header(1), Fill(1), Fill(0), Fill(2)])
+    partial = program(nba)
+    # print(Delete.arguments(partial))
+
+
+# def test_full_nba():
+#     nba = get_nba()
+#     program = Program(
+#         [
+#             Header(1),
+#             Divide(1, StyleCondition("bold", True)),
+#             Fill(1),
+#             Fill(2),
+#             Delete(4, EmptyCondition()),
+#         ]
+#     )
+#     print(program(nba))
 
 
 if __name__ == "__main__":
@@ -131,4 +152,5 @@ if __name__ == "__main__":
     test_fold_arguments_icecream()
     test_fold_arguments_nurse()
     test_delete_arguments()
+    test_divide()
     test_divide_arguments()

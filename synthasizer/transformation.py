@@ -3,6 +3,7 @@ from copy import copy
 from operator import attrgetter
 from typing import Callable, List, Tuple, Any, Union, Optional, Type, Iterable
 from collections import Counter
+import inspect
 import numpy as np
 import pandas as pd
 from .conditions import Condition, EmptyCondition, StyleCondition
@@ -24,6 +25,20 @@ class Transformation(ABC):
     @abstractclassmethod
     def arguments(self, table: Table) -> List[Tuple[Any]]:
         pass
+
+    def __eq__(self, other: "Transformation") -> bool:
+        if self.__class__ != other.__class__:
+            return False
+        return self.unpack() == other.unpack()
+
+    def __hash__(self) -> int:
+        return hash((self.__class__.__name__, *self.unpack()))
+
+    def unpack(self) -> Tuple[Any, ...]:
+        """Get arguments."""
+        names = inspect.signature(self.__init__).parameters
+        values = tuple(getattr(self, "_{}".format(a)) for a in names)
+        return values
 
 
 class Delete(Transformation):
@@ -79,11 +94,9 @@ class Divide(Transformation):
     def __call__(self, table: Table) -> Table:
         table = copy(table)
         column = table[self._column]
-        values = {getattr(c, self._on) for c in column}
+        values = {c.style[self._on] for c in column}
         values.discard("empty")
-        masks = [
-            column.map(lambda x: getattr(x, self._on) == value) for value in values
-        ]
+        masks = [column.map(lambda x: x.style[self._on] == value) for value in values]
         data = pd.concat([column[mask] for mask in masks], axis=1)
         table.df = pd.concat(
             (table[:, : self._column], data, table[:, self._column + 1 :]), axis=1
@@ -111,7 +124,9 @@ class Divide(Transformation):
         styles = np.vectorize(cls.extract_style)(table.df.values).T
         result = list()
         for i in range(table.width):
-            union = set.union(*styles[i][values[i]])
+            if len(styles[i][values[i]]) < 1:
+                continue
+            union = set.union(*styles[i][values[i]], set())
             inter = set.intersection(*styles[i][values[i]])
             for (k, _) in union - inter:
                 result.append((i, k))
@@ -348,57 +363,57 @@ class Fold(Transformation):
         table.df = pd.concat((before, var, val, after), axis=1).reset_index(drop=True)
         return table
 
-    def __call__old(self, table: Table) -> Table:
-        """Fold columns.
+    # def __call__old(self, table: Table) -> Table:
+    #     """Fold columns.
 
-        Reuse as much of `pd.melt` as possible,
-        which requires to add a new column to
-        ensure duplicates aren't complained about.
+    #     Reuse as much of `pd.melt` as possible,
+    #     which requires to add a new column to
+    #     ensure duplicates aren't complained about.
 
-        """
-        table = copy(table)
-        columns = table.df.columns.tolist()
-        columns_value = columns[self._column1 : self._column2 + 1]
-        columns_id = [column for column in columns if column not in columns_value]
-        # get mapping and inverse
-        table.df = pd.melt(
-            table.df,
-            value_vars=columns_value,
-            id_vars=columns_id,
-            var_name=[Cell("variable")],
-            value_name=Cell("value"),
-        )
-        return table
+    #     """
+    #     table = copy(table)
+    #     columns = table.df.columns.tolist()
+    #     columns_value = columns[self._column1 : self._column2 + 1]
+    #     columns_id = [column for column in columns if column not in columns_value]
+    #     # get mapping and inverse
+    #     table.df = pd.melt(
+    #         table.df,
+    #         value_vars=columns_value,
+    #         id_vars=columns_id,
+    #         var_name=[Cell("variable")],
+    #         value_name=Cell("value"),
+    #     )
+    #     return table
 
-    @classmethod
-    def get_mapping(
-        cls,
-        columns: List[Cell],
-    ) -> Tuple[Callable[[Cell], Cell], Callable[[Cell], Cell]]:
-        """Return two mappings.
+    # @classmethod
+    # def get_mapping(
+    #     cls,
+    #     columns: List[Cell],
+    # ) -> Tuple[Callable[[Cell], Cell], Callable[[Cell], Cell]]:
+    #     """Return two mappings.
 
-        Returns:
-            Two cell -> cell functions, one for deduplicating
-            and one for restoring.
+    #     Returns:
+    #         Two cell -> cell functions, one for deduplicating
+    #         and one for restoring.
 
-        """
+    #     """
 
-        duplicated = duplicates(columns)
-        m = {id(d): Cell("!{}".format(i)) for i, d in enumerate(duplicated)}
-        i = {v: k for k, v in m.items()}
+    #     duplicated = duplicates(columns)
+    #     m = {id(d): Cell("!{}".format(i)) for i, d in enumerate(duplicated)}
+    #     i = {v: k for k, v in m.items()}
 
-        def mapping(cell: Cell) -> Cell:
-            i = id(cell)
-            if i in m:
-                return m[id(cell)]
-            return cell
+    #     def mapping(cell: Cell) -> Cell:
+    #         i = id(cell)
+    #         if i in m:
+    #             return m[id(cell)]
+    #         return cell
 
-        def inverse(cell: Cell) -> Cell:
-            if cell in i:
-                return i[cell]
-            return cell
+    #     def inverse(cell: Cell) -> Cell:
+    #         if cell in i:
+    #             return i[cell]
+    #         return cell
 
-        return mapping, inverse
+    #     return mapping, inverse
 
     @classmethod
     def arguments(cls, table: Table) -> List[Tuple[int, int]]:
@@ -412,7 +427,7 @@ class Fold(Transformation):
         column.
 
         """
-        if not table.header:
+        if not table.header or table.n_colors == 0:
             return []
         # else, find the candidates
         arguments = list()
@@ -438,7 +453,19 @@ class Fold(Transformation):
                 colors_table = nzs(table.color_df.iloc[:, a])
             elif b > a:
                 arguments.append((a, b))
-        return arguments
+        return Fold.filter_overlapping(arguments)
+
+    @staticmethod
+    def filter_overlapping(arguments: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+        filtered = list()
+        for i, a in enumerate(arguments):
+            if i + 1 < len(arguments):
+                b = arguments[i + 1]
+                if b[0] > a[1]:
+                    filtered.append(a)
+            else:
+                filtered.append(a)
+        return filtered
 
     def __str__(self):
         return "Fold({}, {})".format(self._column1, self._column2)

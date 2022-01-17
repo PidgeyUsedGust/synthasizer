@@ -6,3 +6,6 @@ __pycache__
 Pipfile.lock
 build/
 .ipynb*
+env
+dist
+synth_tests

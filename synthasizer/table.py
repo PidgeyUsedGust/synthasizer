@@ -34,6 +34,7 @@ class Cell:
         self.color = 0
         self.base = None
         self.style = defaultdict(nothing)
+        self.style["datatype"] = type(value)
         self.style.update(kwargs)
 
     def same_style(self, other: "Cell") -> bool:
@@ -347,8 +348,7 @@ def detect_ranges(sheet: Worksheet) -> List[str]:
     mask = np.zeros((sheet.max_row, sheet.max_column), dtype=int)
     for row in sheet.rows:
         for cell in row:
-            if cell.value is not None:
-                # print(cell.row, cell.column, cell.value)
+            if cell.value not in {None, "", np.nan}:
                 mask[cell.row - 1, cell.column - 1] = 1.0
     # look for tables
     tables = list()

@@ -21,13 +21,17 @@ class Wrangler:
         strategy: Optional[Strategy] = None,
         max_depth: int = 5,
         max_iterations: int = 0,
+        max_time: float = 1,
         verbose: bool = False,
     ) -> None:
         """
 
         Args:
-            prune_worse: If true, only consider transformations
-                that improve a table.
+            max_depth: Maximal number of transformations.
+            max_iterations: Maximal number of iterations. If
+                many transformations are available, this
+                can still take a long time.
+            max_time: Maximal number of seconds.
 
         """
         self._language = language
@@ -36,6 +40,7 @@ class Wrangler:
         self._strategy = strategy or Astar()
         self._max_depth = max_depth
         self._max_iterations = max_iterations
+        self._max_time = max_time
         self._verbose = verbose
 
     def learn(self, table: Table) -> List[Program]:
@@ -75,9 +80,6 @@ class Wrangler:
             iterations += 1
             if self._max_iterations and iterations >= self._max_iterations:
                 break
-            # if iterations == 2:
-            #     break
-            # break
         return result
 
     def wrangle(self, table: Table) -> Table:

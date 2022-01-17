@@ -109,7 +109,7 @@ class ColorColumnHeuristic(ColumnHeuristic):
         cdf = table.color_df
         columns = [set(cdf.iloc[:, i]) for i in range(table.width)]
         # add colors of header cells
-        if table.header:
+        if table.header > 0:
             for i in range(table.width):
                 columns[i].add(cdf.columns[i])
         # remove no colors
@@ -172,7 +172,7 @@ class ValueColumnHeuristic(ColumnHeuristic):
                 if count == 0:
                     scores[i] = 0
                 else:
-                    types = Counter(cell.dtype for cell in table[i] if cell)
+                    types = Counter(cell.datatype for cell in table[i] if cell)
                     # _, n = types.most_common(1)[0]
                     scores[i] = types.most_common(1)[0][1] / count
             # uniform number columns get a perfect score

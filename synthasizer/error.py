@@ -65,16 +65,22 @@ class MixedReconstructionError(ReconstructionError):
 
     def score(self, cell: Cell) -> float:
         """Compute score of a cell."""
+        # can safely remove empty cells
         if cell.value is None:
             return 0.0
+        # can safely remove cells with separate style
+        style = _freeze(cell.style)
+        if self._style[style] == 1:
+            return 0.0
+        # compute removed information
         score_style = self._style[_freeze(cell.style)] / self._total
         score_shape = self._shape[_shape(str(cell))] / self._total
         return (score_style + score_shape) / 2.0
 
 
-def _freeze(d: Dict[str, Any]) -> Tuple[Tuple[str, Any], ...]:
+def _freeze(d: Dict[str, Any]) -> str:
     """Freeze dictionary."""
-    return tuple(sorted(d.items()))
+    return str(sorted(d.items()))
 
 
 def _shape(s: str) -> str:

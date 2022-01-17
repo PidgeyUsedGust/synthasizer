@@ -4,7 +4,6 @@ need to be propagated through the table after
 applying transformations.
 """
 import itertools
-from openpyxl.cell import cell
 import pandas as pd
 import numpy as np
 from copy import copy
@@ -14,7 +13,7 @@ from functools import cached_property
 from operator import attrgetter, itemgetter
 from openpyxl.cell.cell import Cell as PyxlCell
 from openpyxl.worksheet.worksheet import Worksheet
-from openpyxl.utils import get_column_letter
+from openpyxl.utils import get_column_letter, range_boundaries
 from synthasizer.utilities import infer_types, nothing
 
 
@@ -33,6 +32,7 @@ class Cell:
     def __init__(self, value: Optional[Any] = None, **kwargs):
         self.value = none(value)
         self.color = 0
+        self.base = None
         self.style = defaultdict(nothing)
         self.style.update(kwargs)
 
@@ -124,7 +124,7 @@ class Table:
         """
         self.df = pd.DataFrame(dtype=object)
         self.current_color = 1
-        self.header = False
+        self.header = 0
         if df is not None:
             data = [[Cell(v) for v in row] for _, row in df.iterrows()]
             columns = [Cell(v) for v in df.columns]
@@ -190,7 +190,7 @@ class Table:
         """Number of colors."""
         color_df = self.color_df
         colors = set(color_df.values.ravel("k"))
-        if self.header:
+        if self.header > 0:
             colors_header = set(itertools.chain.from_iterable(color_df.columns))
         else:
             colors_header = set()
@@ -234,7 +234,7 @@ class Table:
         """Get all cells in the table."""
         cells = self.df.values.ravel("K")
         cells = cells[cells != Cell(None)]
-        if self.header:
+        if self.header > 0:
             if isinstance(self.df.columns, pd.MultiIndex):
                 cells_header = itertools.chain.from_iterable(self.df.columns)
             else:
@@ -252,12 +252,12 @@ class Table:
         return len(self.df.columns)
 
     @classmethod
-    def from_csv(cls, file: str, header: Optional[int] = None):
+    def from_csv(cls, file: str, header: Optional[int] = None) -> "Table":
         """Load from CSV."""
         return Table(pd.read_csv(file, header=header))
 
     @classmethod
-    def from_openpyxl(cls, data: List[List[PyxlCell]]):
+    def from_openpyxl(cls, data: List[List[PyxlCell]]) -> "Table":
         """Load from openpyxl cells."""
         cells = [[Cell.from_openpyxl(c) for c in row] for row in data]
         index = [Cell(i) for i in range(len(cells[0]))]
@@ -322,8 +322,23 @@ def none(value: Any):
     return value
 
 
-def detect(sheet: Worksheet) -> List[Table]:
-    return [Table.from_openpyxl(sheet[i]) for i in detect_ranges(sheet)]
+def detect(sheet: Worksheet, min_size: int = 4) -> List[Table]:
+    """Detect tables in a worksheet.
+
+    Args:
+        min_size: Number of cells that a table should contain.
+
+    Returns:
+        A list of tables.
+
+    """
+    unmerge(sheet)
+    tables = list()
+    for i in detect_ranges(sheet):
+        min_col, min_row, max_col, max_row = range_boundaries(i)
+        if (max_row - min_row) * (max_col - min_col) >= min_size:
+            tables.append(Table.from_openpyxl(sheet[i]))
+    return tables
 
 
 def detect_ranges(sheet: Worksheet) -> List[str]:
@@ -333,6 +348,7 @@ def detect_ranges(sheet: Worksheet) -> List[str]:
     for row in sheet.rows:
         for cell in row:
             if cell.value is not None:
+                # print(cell.row, cell.column, cell.value)
                 mask[cell.row - 1, cell.column - 1] = 1.0
     # look for tables
     tables = list()
@@ -379,3 +395,28 @@ def to_excel(point: Tuple[int, int]) -> str:
 
     """
     return get_column_letter(point[0] + 1) + str(point[1] + 1)
+
+
+def unmerge(sheet: Worksheet) -> None:
+    """Unmerge all cells in a worksheet."""
+    for i in list(sheet.merged_cells.ranges):
+        i = str(i)
+        value = next((c for r in sheet[i] for c in r if c.value is not None), None)
+        sheet.unmerge_cells(i)
+        if value is not None:
+            for row in sheet[i]:
+                for cell in row:
+                    cell.value = value.value
+                    if value.has_style:
+                        cell.font = copy(value.font)
+                        cell.border = copy(value.border)
+                        cell.fill = copy(value.fill)
+                        cell.number_format = copy(value.number_format)
+                        cell.protection = copy(value.protection)
+                        cell.alignment = copy(value.alignment)
+
+
+def trim(sheet: Worksheet, table: str) -> str:
+    """Trim exterior rows and columns that contain only a single element."""
+
+    min_col, min_row, max_col, max_row = range_boundaries(table)

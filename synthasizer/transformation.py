@@ -1,14 +1,14 @@
 from abc import ABC, abstractmethod, abstractclassmethod
 from copy import copy
-from operator import attrgetter
-from typing import Callable, List, Tuple, Any, Union, Optional, Type, Iterable
-from collections import Counter
+from typing import List, Tuple, Any, Union, Optional, Type, Iterable
+from itertools import zip_longest
 import inspect
 import numpy as np
 import pandas as pd
+from pandas.core.algorithms import isin
 from .conditions import Condition, EmptyCondition, StyleCondition
 from .table import Table, Cell
-from .utilities import duplicates, nzs, infer_types
+from .utilities import nzs, infer_types
 
 
 Label = Union[int, str, Cell]
@@ -195,7 +195,7 @@ class Header(Transformation):
         table.df.columns = columns
         table.df = table.df.iloc[self._n :]
         table.df.reset_index(drop=True, inplace=True)
-        table.header = True
+        table.header = self._n
         return table
 
     @classmethod
@@ -208,7 +208,7 @@ class Header(Transformation):
         If the table already has a header, return no arguments.
 
         """
-        if table.header:
+        if table.header > 0:
             return []
         arguments = cls.arguments_dtype(table)
         if len(arguments) == 0:
@@ -273,13 +273,14 @@ class Fill(Transformation):
 
     def __call__(self, table: Table) -> pd.DataFrame:
         table = copy(table)
-        table.df.iloc[:, self._column] = (
-            table.df.iloc[:, self._column]
-            .replace([Cell(pd.NA)], np.nan)
-            .ffill()
-            .fillna(Cell(None))
-        )
-
+        value = Cell(pd.NA)
+        column = table.df.iloc[:, self._column]
+        for i, cell in column.iteritems():
+            if cell == Cell(pd.NA):
+                column[i] = value
+            else:
+                value = copy(cell)
+                value.base = cell
         return table
 
     @classmethod
@@ -346,13 +347,17 @@ class Fold(Transformation):
         """
         # slice out block of values to be folded
         block = table.df.iloc[:, self._column1 : self._column2 + 1]
-        # past them one after another
+        # build column of values
         val = pd.DataFrame(block.values.reshape((-1, 1)), columns=[Cell("value")])
+        # build column(s) of variables
         var = pd.DataFrame(
-            np.tile(
-                table.df.columns[self._column1 : self._column2 + 1].values, table.height
-            ),
-            columns=[Cell("variable")],
+            [
+                *np.tile(
+                    table.df.columns[self._column1 : self._column2 + 1].values,
+                    table.height,
+                )
+            ],
+            columns=[Cell("variable{}".format(i)) for i in range(table.header)],
         )
         # before and after pieces
         idx = table.df.index.repeat(self._column2 - self._column1 + 1)
@@ -360,60 +365,22 @@ class Fold(Transformation):
         after = table.df.iloc[:, self._column2 + 1 :].loc[idx].reset_index(drop=True)
         # make new table
         table = copy(table)
-        table.df = pd.concat((before, var, val, after), axis=1).reset_index(drop=True)
+        table.df = pd.concat((before, var, val, after), axis=1)
+        # fix the index
+        if table.header > 1:
+            height = max(len(c) for c in table.df.columns if isinstance(c, tuple))
+            values = list()
+            for v in table.df.columns:
+                if not isinstance(v, tuple):
+                    v = (v,)
+                values.append((Cell(None),) * (height - len(v)) + v)
+            index = pd.MultiIndex.from_tuples(values)
+            index = index.droplevel(
+                [i for i, l in enumerate(index.levels) if not any(c for c in l)]
+            )
+            table.df.columns = index
         return table
 
-    # def __call__old(self, table: Table) -> Table:
-    #     """Fold columns.
-
-    #     Reuse as much of `pd.melt` as possible,
-    #     which requires to add a new column to
-    #     ensure duplicates aren't complained about.
-
-    #     """
-    #     table = copy(table)
-    #     columns = table.df.columns.tolist()
-    #     columns_value = columns[self._column1 : self._column2 + 1]
-    #     columns_id = [column for column in columns if column not in columns_value]
-    #     # get mapping and inverse
-    #     table.df = pd.melt(
-    #         table.df,
-    #         value_vars=columns_value,
-    #         id_vars=columns_id,
-    #         var_name=[Cell("variable")],
-    #         value_name=Cell("value"),
-    #     )
-    #     return table
-
-    # @classmethod
-    # def get_mapping(
-    #     cls,
-    #     columns: List[Cell],
-    # ) -> Tuple[Callable[[Cell], Cell], Callable[[Cell], Cell]]:
-    #     """Return two mappings.
-
-    #     Returns:
-    #         Two cell -> cell functions, one for deduplicating
-    #         and one for restoring.
-
-    #     """
-
-    #     duplicated = duplicates(columns)
-    #     m = {id(d): Cell("!{}".format(i)) for i, d in enumerate(duplicated)}
-    #     i = {v: k for k, v in m.items()}
-
-    #     def mapping(cell: Cell) -> Cell:
-    #         i = id(cell)
-    #         if i in m:
-    #             return m[id(cell)]
-    #         return cell
-
-    #     def inverse(cell: Cell) -> Cell:
-    #         if cell in i:
-    #             return i[cell]
-    #         return cell
-
-    #     return mapping, inverse
 
     @classmethod
     def arguments(cls, table: Table) -> List[Tuple[int, int]]:
@@ -427,7 +394,7 @@ class Fold(Transformation):
         column.
 
         """
-        if not table.header or table.n_colors == 0:
+        if table.header == 0 or table.n_colors == 0:
             return []
         # else, find the candidates
         arguments = list()
@@ -510,7 +477,7 @@ class Stack(Transformation):
         If headers are present, they need to be the same.
 
         """
-        if table.header:
+        if table.header > 0:
             return cls.arguments_header(table)
         return list()
 

@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import List, Dict
-from synthasizer import pattern
 from synthasizer.transformation import Program
 from synthasizer.table import Table
 from synthasizer.pattern import Pattern
@@ -13,6 +12,7 @@ class State:
     """State during search."""
 
     score: float
+    error: float
     program: Program
     table: Table
 
@@ -151,34 +151,34 @@ class VariedGreedy(Greedy):
         super().push(unique)
 
 
-class IterativeDeepeningBeam(Beam):
-    """Iterative deepening beam.
+# class IterativeDeepeningBeam(Beam):
+#     """Iterative deepening beam.
 
-    Combines beam search with iterative deepening. We'll
-    most likely not require a complete search space anyway.
+#     Combines beam search with iterative deepening. We'll
+#     most likely not require a complete search space anyway.
 
-    """
+#     """
 
-    def __init__(self, width: int, start: int = 4, delta: int = 2) -> None:
-        """
+#     def __init__(self, width: int, start: int = 4, delta: int = 2) -> None:
+#         """
 
-        Args:
-            width: Width of the beam.
-            start: Starting maximal depth. End is controlled
-                by the wrangler and not by the strategy.
-            delta: Number of levels to increase after previous
-                depth is completely explored.
+#         Args:
+#             width: Width of the beam.
+#             start: Starting maximal depth. End is controlled
+#                 by the wrangler and not by the strategy.
+#             delta: Number of levels to increase after previous
+#                 depth is completely explored.
 
-        """
-        super().__init__(width=width)
-        self._level = start
-        self._delta = delta
-        self._wait = list()
+#         """
+#         super().__init__(width=width)
+#         self._level = start
+#         self._delta = delta
+#         self._wait = list()
 
-    def push(self, candidates: List[State]) -> None:
-        # exceeds current length, add to wait list
-        if len(candidates[0].program) > self._level:
-            self._wait.extend(candidates)
+#     def push(self, candidates: List[State]) -> None:
+#         # exceeds current length, add to wait list
+#         if len(candidates[0].program) > self._level:
+#             self._wait.extend(candidates)
 
 
 class Junction(Strategy):
@@ -216,10 +216,13 @@ class Astar(Strategy):
 
     def __init__(self, length: int = 5) -> None:
         super().__init__()
-        self._length = float(length)
+        self._base = 0
         self._scores: Dict[Program, float] = dict()
 
     def push(self, candidates: List[State]) -> None:
+        # set the base score
+        if self._base == 0 and len(candidates) == 1:
+            self._base = candidates[0].score
         # update scores
         for candidate in candidates:
             self._scores[candidate.program] = self.rate(candidate)
@@ -229,7 +232,8 @@ class Astar(Strategy):
 
     def rate(self, state: State) -> float:
         """Rate a state."""
-        return state.score - (len(state.program) / 40)
+        # return (state.score - self._base + 1) / (len(state.program) + 1)
+        return state.score
 
 
 class Prioritizer(Strategy):

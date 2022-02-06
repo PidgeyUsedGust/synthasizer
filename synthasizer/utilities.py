@@ -1,5 +1,4 @@
-from typing import Any, Iterable, List, Set, TypeVar
-import typing
+from typing import Any, Iterable, List, TypeVar
 
 T = TypeVar("T")
 
@@ -8,6 +7,10 @@ class nzs(set):
     """Nonzero set."""
 
     def __init__(self, s=()) -> None:
+        # ensure iterable
+        if not isinstance(s, Iterable):
+            s = (s,)
+        # initialise set
         super().__init__(set(s) - {0})
 
     def add(self, element: Any) -> None:
@@ -17,6 +20,8 @@ class nzs(set):
 
     def update(self, s: Iterable[Any]) -> None:
         """Add many elements to the set."""
+        if not isinstance(s, Iterable):
+            s = (s,)
         return super().update(set(s) - {0})
 
 
@@ -54,8 +59,44 @@ def infer_types(types: Iterable[str]) -> str:
         return "empty"
     if len(unique) == 1:
         return unique[0]
+    if unique == ["floating", "integer"]:
+        return "numerical"
     return "mixed-{}".format("-".join(unique))
 
 
 def nothing():
     return None
+
+
+"""Keep a list of sets of constants."""
+_constants = [
+    {
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    },
+    {
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+    },
+]
+constants = {value: i for i, values in enumerate(_constants) for value in values}

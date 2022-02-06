@@ -1,6 +1,6 @@
 from numpy import exp
 from synthasizer.wrangle import Junction, State, Program, VariedBeam
-from synthasizer.transformations import *
+from synthasizer.transformation import *
 
 
 def test_variedbeam():

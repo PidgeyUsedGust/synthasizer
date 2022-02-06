@@ -1,9 +1,9 @@
 """Computing reconstruction error."""
 from abc import ABC, abstractmethod
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict
 from collections import Counter
-from .table import Cell, Table
+from .table import Table
 
 
 class ReconstructionError(ABC):
@@ -37,8 +37,18 @@ class ContentReconstructionError(ReconstructionError):
         return max(0, 0.05 * len(self._cells - set(table.cells)))
 
 
-class MixedReconstructionError(ReconstructionError):
-    """Compute reconstruction error."""
+class ThresholdedReconstructionError(ReconstructionError):
+    """Compute reconstruction error.
+
+    Reconstructions errors above a threshold are scaled
+    to being completely disallowed.
+
+    """
+
+    def __init__(self, threshold: float = 0.02) -> None:
+        """"""
+        super().__init__()
+        self._threshold = threshold
 
     def initialise(self, table: Table):
         super().initialise(table)
@@ -59,23 +69,22 @@ class MixedReconstructionError(ReconstructionError):
         if table.n_colors < self._table.n_colors:
             return 1.0
         # else count value of removed cells
-        removed = self._cells - Counter(table.cells)
-        score = sum(self.score(cell) * count for cell, count in removed.items())
-        return score / self._total
-
-    def score(self, cell: Cell) -> float:
-        """Compute score of a cell."""
-        # can safely remove empty cells
-        if cell.value is None:
-            return 0.0
-        # can safely remove cells with separate style
-        style = _freeze(cell.style)
-        if self._style[style] == 1:
-            return 0.0
-        # compute removed information
-        score_style = self._style[_freeze(cell.style)] / self._total
-        score_shape = self._shape[_shape(str(cell))] / self._total
-        return (score_style + score_shape) / 2.0
+        cells = Counter(cell.base for cell in table.cells)
+        score = 0
+        for cell, count in (self._cells - cells).items():
+            # criteria for cells that are free to remove
+            if (
+                cell.value is None
+                or self._style[_freeze(cell.style)] == 1
+                or cell.base in cells
+            ):
+                continue
+            # else,
+            score += count
+        score = score / self._total
+        if score > self._threshold:
+            return 1.0
+        return score
 
 
 def _freeze(d: Dict[str, Any]) -> str:

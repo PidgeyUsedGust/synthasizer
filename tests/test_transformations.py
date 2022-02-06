@@ -1,156 +1,165 @@
-from tests.test_table import get_nba
-from numpy.lib.index_tricks import diag_indices
-import openpyxl
-from synthasizer.wrangle import State
-from synthasizer.table import detect
+from collections import defaultdict
+from numpy import stack
 from synthasizer.transformation import *
-from test_table import get_icecream, get_nurse
 
 
-def all_cells(df: pd.DataFrame) -> bool:
-    data = df.applymap(lambda x: isinstance(x, Cell)).all().all()
-    columns = all(isinstance(c, Cell) for c in df.columns.values.ravel("K"))
-    return data and columns
+def all_cells(table: Table) -> bool:
+    return all(isinstance(c, Cell) for c in table.cells)
 
 
-def test_header():
-    wb = openpyxl.load_workbook("data/icecream.xlsx")
-    icecream = detect(wb["icecream"])[0]
-    icecream_header = Header(1)(icecream)
-    header = detect(wb["header"])[0]
-    header_header = Header(2)(header)
-    assert icecream_header.header == True
-    assert icecream_header.dataframe.equals(header_header.dataframe)
-    assert isinstance(header_header.df.columns, pd.Index)
-    assert all_cells(icecream_header.df)
+def test_header(nurse):
+    nurse = nurse.color_all([(0, 2), (1, 1), (2, 0), (2, 2)])
+    nurse_header = Header(2)(nurse)
+    assert nurse_header.header > 0
+    assert isinstance(nurse_header.df.columns, pd.Index)
+    assert all_cells(nurse_header)
+    assert nurse_header.n_colors == nurse.n_colors
 
 
-def test_header_arguments():
-    wb = openpyxl.load_workbook("data/icecream.xlsx")
-    # test regular
-    icecream = detect(wb["icecream"])[0]
+def test_header_arguments(icecream, nurse, nurse2):
     icecream_arguments = Header.arguments(icecream)
     assert len(icecream_arguments) == 1
     assert (1,) in icecream_arguments
-    # test
-    header = detect(wb["header"])[0]
-    header_arguments = Header.arguments(header)
-    assert len(header_arguments) == 2
-    assert (1,) in header_arguments
-    assert (2,) in header_arguments
+    # multi level with one option
+    nurse_arguments = Header.arguments(nurse)
+    assert len(nurse_arguments) == 1
+    assert (2,) in nurse_arguments
+    # other nurse
+    nurse2_arguments = Header.arguments(nurse2)
+    assert len(nurse2_arguments) == 1
+    assert (1,) in nurse2_arguments
+    # icecream
+    assert Header.arguments(Fill(0)(icecream)) == [(1,)]
 
 
-def test_divide():
-    # nurse = get_nurse()
-    # inter =  Divide(18, dtype)(Delete(2, EmptyCondition)(nurse))
-    nba = Header(1)(get_nba())
-    divided = Divide(1, "bold")(nba)
-    assert nba.width < divided.width
+def test_divide(car):
+    after = Divide(0, "bold")(car)
+    print(after)
+    for cell in after.df.columns.values:
+        print(cell, id(cell))
 
 
-def test_divide_arguments():
-
-    nurse = get_nurse()
-    inter = Delete(2, EmptyCondition())(nurse)
-
-    icecream = get_icecream()
-    icecream_arguments = Divide.arguments(icecream)
-    assert (1, "bold") in icecream_arguments
-    assert (0, "bold") not in icecream_arguments
-
-    nba = get_nba()
-    # print(Divide.arguments(Delete(1, StyleCondition("bold", True))(nba)))
+def test_divide_deeltijdswerk(deeltijdswerk):
+    divided = Divide(1, "bold")(deeltijdswerk)
+    assert divided.width == deeltijdswerk.width + 1
 
 
-def test_fill():
-    # load nurse and check for empty cells
-    nurse = get_nurse()
-    assert nurse.df.iloc[2, 1] == Cell(None)
-    assert nurse.df.iloc[0, 1] == Cell(None)
-    assert nurse.df.iloc[1, 1] == Cell("Mon")
-    # fill and check
-    filled = Fill(1)(nurse)
-    assert filled.df.iloc[2, 1] == Cell("Mon")
-    assert filled.df.iloc[0, 1] == Cell(None)
-    assert all_cells(filled.df)
+def test_divide_arguments(car):
+    print(Divide.arguments(car))
 
 
-def test_stack_arguments():
-    nurse = Header(1)(get_nurse())
-    assert Stack.arguments(nurse) == [(1, 29, 4)]
+def test_fill(icecream, car):
+    assert icecream.df.iloc[1, 0].value == "Banana"
+    assert not icecream.df.iloc[2, 0]
+    # assert icecream.df.iloc[1, 0].base is None
+    # assert icecream.df.iloc[2, 0].base is None
+    filled = Fill(0)(icecream)
+    assert filled.df.iloc[1, 0].value == "Banana"
+    assert filled.df.iloc[2, 0].value == "Banana"
+    assert filled.df.iloc[2, 0].base is not None
+    # assert filled.df.iloc[1, 0].base is None
+    car = Divide(0, "datatype")(car)
+    car_filled = Fill(0)(car)
+    print(car_filled)
 
 
-def test_stack():
-    nurse = Header(1)(get_nurse())
-    stack = Stack(1, 29, 4)
-    stacked = stack(nurse)
+def test_fill_arguments(nba):
+    nba = Header(1)(nba)
+    assert Fill.arguments(nba) == [(0,)]
+
+
+def test_stack_arguments(nurse2):
+    nurse2 = Header(1)(nurse2)
+    assert Stack.arguments(nurse2) == [(1, 29, 4)]
+
+
+def test_stack(nurse2):
+    nurse = Header(1)(nurse2)
+    stacked = Stack(1, 29, 4)(nurse)
     assert stacked.width == (nurse.width - (29 - 1) + 4)
     assert stacked.height == ((29 - 1) // 4) * nurse.height
     assert stacked.header == True
-    assert all_cells(stacked.df)
+    assert all_cells(stacked)
+    # get removed cells and test whether each value
+    # points to the same base cell and that this
+    # cell is still in the table
+    removed = set(nurse2.cells) - set(stacked.cells)
+    base = defaultdict(set)
+    for cell in removed:
+        base[cell.value].add(cell.base)
+        assert cell.base in stacked.cells
+    assert all(len(v) == 1 for v in base.values())
 
 
-def test_fold_nurse():
-    nurse = get_nurse()
-    nurse = Stack(1, 29, 4)(Header(1)(nurse))
-    after = Fold(2, 4)(nurse)
-    assert after.width == nurse.width - 1
-    assert after.height == nurse.height * (5 - 2)
-    assert after.header == True
-    assert all_cells(after.df)
+def test_fold_single(icecream):
+    folded = Fold(2, 4)(Header(1)(icecream))
+    assert all_cells(folded)
+    # print(folded)
 
 
-def test_fold_arguments_icecream():
-    table = get_icecream()
-    table = table.color_all([(0, 1), (1, 1), (2, 1), (2, 0), (6, 1)])
+def test_fold_multi(nurse):
+    nurse = Header(2)(nurse)
+    fold1 = Fold(1, 3)(nurse)
+    fold2 = Fold(4, 6)(fold1)
+    assert all_cells(fold1)
+    assert all_cells(fold2)
+    # both folds map three columns to three columns
+    assert nurse.width == fold2.width
+    # fold three columns, thus scale height two
+    # times by three
+    assert fold2.height == nurse.height * 3 * 3
+    fold3 = Fold(1, 21)(nurse)
+
+
+def test_fold_arguments_single(icecream, icecreamyear):
+
+    icecream = Header(1)(icecream)
+    icecreamyear = Header(1)(icecreamyear)
+
+    # first try with dumb fold,
+    # which does nothing.
+    Fold.smart = False
+    assert Fold.arguments(icecream) == []
+    assert Fold.arguments(icecreamyear) == []
+
+    # then try for smart folding
+    Fold.smart = True
+    assert Fold.arguments(icecream) == [(2, 4)]
+    assert Fold.arguments(icecreamyear) == [(2, 4)]
+
+
+def test_fold_arguments_single_color(icecream):
+    table = icecream.color_all([(2, 1), (2, 0), (6, 1)])
     header = Header(1)(table)
     arguments = Fold.arguments(header)
     assert (2, 5) in arguments
 
 
-def test_fold_arguments_nurse():
-    nurse = get_nurse().color_all([(0, 2), (1, 1), (2, 0), (2, 2)])
-    inter = Delete(3, EmptyCondition())(Fill(1)(Stack(1, 29, 4)(Header(1)(nurse))))
-    arguments = Fold.arguments(inter)
-    assert (2, 4) in arguments
-    assert (1, 4) not in arguments
-    assert Fold.arguments(nurse) == []
+def test_fold_arguments_multi(deeltijdswerk, nurse):
+    deeltijdswerk = Header(2)(deeltijdswerk)
+    nurse = Header(2)(nurse)
+    assert Fold.arguments(deeltijdswerk) == [(1, 12)]
+    assert Fold.arguments(nurse) == [(1, 21)]
 
 
-def test_delete_arguments():
-    nurse = get_nurse()
-    header = Header(1)(nurse)
-    # print(nurse)
-    # print(Delete.arguments(nurse))
-    # print(Delete.arguments(nurse))
-    nba = get_nba()
-    program = Program([Divide(1, "bold"), Header(1), Fill(1), Fill(0), Fill(2)])
-    partial = program(nba)
-    # print(Delete.arguments(partial))
-
-
-# def test_full_nba():
-#     nba = get_nba()
-#     program = Program(
-#         [
-#             Header(1),
-#             Divide(1, StyleCondition("bold", True)),
-#             Fill(1),
-#             Fill(2),
-#             Delete(4, EmptyCondition()),
-#         ]
-#     )
-#     print(program(nba))
-
-
-if __name__ == "__main__":
-    test_header()
-    test_header_arguments()
-    test_fill()
-    test_stack()
-    test_fold_nurse()
-    test_fold_arguments_icecream()
-    test_fold_arguments_nurse()
-    test_delete_arguments()
-    test_divide()
-    test_divide_arguments()
+def test_fold_arguments_multi_color(deeltijdswerk, part_e):
+    # color everything
+    assert Fold.arguments(
+        Header(2)(deeltijdswerk.color_all([(0, 0), (1, 0), (1, 1), (1, 2)]))
+    ) == [(1, 12)]
+    # part of header and part of table
+    assert Fold.arguments(Header(2)(deeltijdswerk.color_all([(1, 1), (1, 2)]))) == [
+        (1, 12)
+    ]
+    # only color header
+    assert Fold.arguments(Header(2)(deeltijdswerk.color_all([(1, 0), (1, 1)]))) == [
+        (1, 12)
+    ]
+    # early stop
+    assert Fold.arguments(
+        Header(2)(deeltijdswerk.color_all([(1, 0), (1, 1), (4, 1)]))
+    ) == [(1, 3)]
+    # empty
+    assert Fold.arguments(Header(2)(part_e.color_all([(1, 0), (1, 1), (1, 2)]))) == [
+        (1, 10)
+    ]

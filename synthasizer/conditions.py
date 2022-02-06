@@ -1,6 +1,6 @@
 """Conditions that cells can satisfy."""
 from collections import Counter
-from typing import List, Dict, Any, Tuple
+from typing import List, Any, Tuple
 from abc import ABC, abstractmethod, abstractclassmethod
 from pandas import isna
 from .table import Cell
@@ -21,8 +21,11 @@ class Condition(ABC):
 class EmptyCondition(Condition):
     """Check whether cell is empty."""
 
-    def __call__(self, value: Cell):
+    def __call__(self, value: Cell) -> bool:
         return isna(value.value)
+
+    def __eq__(self, o: object) -> bool:
+        return isinstance(o, EmptyCondition)
 
     def __str__(self):
         return "EmptyCondition"
@@ -45,7 +48,7 @@ class StyleCondition(Condition):
         self._key = key
         self._value = value
 
-    def __call__(self, value: Cell):
+    def __call__(self, value: Cell) -> bool:
         if self._key not in value.style:
             return False
         else:
@@ -70,3 +73,10 @@ class StyleCondition(Condition):
 
     def __repr__(self) -> str:
         return "StyleCondition({}, {})".format(repr(self._key), repr(self._value))
+
+    def __eq__(self, o: object) -> bool:
+        return (
+            isinstance(o, StyleCondition)
+            and self._key == o._key
+            and self._value == o._value
+        )

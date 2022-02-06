@@ -1,14 +1,18 @@
 from abc import ABC, abstractmethod, abstractclassmethod
+from ast import arg, arguments
 from copy import copy
-from typing import List, Tuple, Any, Union, Optional, Type, Iterable
-from itertools import zip_longest
+from itertools import chain
+from turtle import width
+from typing import List, Set, Tuple, Any, Union, Optional, Type, Iterable
 import inspect
+from unicodedata import name
+from urllib.parse import parse_qs
 import numpy as np
 import pandas as pd
-from pandas.core.algorithms import isin
+from pyparsing import col
 from .conditions import Condition, EmptyCondition, StyleCondition
 from .table import Table, Cell
-from .utilities import nzs, infer_types
+from .utilities import nzs, infer_types, constants, transpose
 
 
 Label = Union[int, str, Cell]
@@ -65,6 +69,20 @@ class Delete(Transformation):
             column = table.df.iloc[:, i]
             for candidate in cls.conditions:
                 for condition in candidate.generate(column.tolist()):
+
+                    arguments.append((i, condition))
+        return arguments
+
+    @classmethod
+    def arguments_segmented(cls, table: Table) -> List[Tuple[int, Condition]]:
+        arguments = list()
+        for i in range(table.width):
+            column = table.df.iloc[:, i]
+            colors = table.color_df.iloc[:, i]
+            colors = colors[colors > 0]
+            print(colors)
+            for candidate in cls.conditions:
+                for condition in candidate.generate(column.tolist()):
                     arguments.append((i, condition))
         return arguments
 
@@ -87,6 +105,9 @@ class Divide(Transformation):
 
     """
 
+    """Whether to use styles or not."""
+    style = True
+
     def __init__(self, column: int, on: str = "datatype"):
         self._column = column
         self._on = on
@@ -97,7 +118,8 @@ class Divide(Transformation):
         values = {c.style[self._on] for c in column}
         values.discard("empty")
         masks = [column.map(lambda x: x.style[self._on] == value) for value in values]
-        data = pd.concat([column[mask] for mask in masks], axis=1)
+        columns = [pd.Series(column[mask], name=copy(column.name)) for mask in masks]
+        data = pd.concat(columns, axis=1)
         table.df = pd.concat(
             (table[:, : self._column], data, table[:, self._column + 1 :]), axis=1
         ).fillna(Cell(None))
@@ -105,7 +127,10 @@ class Divide(Transformation):
 
     @classmethod
     def arguments(cls, table: Table) -> List[Tuple[int, str]]:
-        return list(set(cls.arguments_datatype(table) + cls.arguments_style(table)))
+        arguments = set(cls.arguments_datatype(table))
+        if cls.style:
+            arguments.update(cls.arguments_style(table))
+        return list(arguments)
 
     @classmethod
     def arguments_datatype(cls, table: Table) -> List[Tuple[int, str]]:
@@ -131,6 +156,10 @@ class Divide(Transformation):
             for (k, _) in union - inter:
                 result.append((i, k))
         return result
+
+    @classmethod
+    def arguments_color(cls, table: Table) -> List[Tuple[int, str]]:
+        pass
 
     @classmethod
     def extract_style(cls, cell: Cell) -> set[Tuple[str, Any]]:
@@ -188,7 +217,9 @@ class Header(Transformation):
                     columns[row] = headers[i][row]
             # else make multi index
             else:
-                columns = pd.MultiIndex.from_arrays(table.df.iloc[: self._n].values)
+                columns = pd.MultiIndex.from_tuples(
+                    transpose(table.df.iloc[: self._n].values)
+                )
         else:
             columns = table.df.iloc[self._n - 1]
         table = copy(table)
@@ -266,7 +297,7 @@ class Header(Transformation):
 class Fill(Transformation):
     """Forward fill a column."""
 
-    threshold: float = 0.8
+    threshold: float = 0.5
 
     def __init__(self, column: int):
         self._column = column
@@ -276,7 +307,7 @@ class Fill(Transformation):
         value = Cell(pd.NA)
         column = table.df.iloc[:, self._column]
         for i, cell in column.iteritems():
-            if cell == Cell(pd.NA):
+            if not bool(cell):
                 column[i] = value
             else:
                 value = copy(cell)
@@ -291,6 +322,7 @@ class Fill(Transformation):
 
          * Containing at least a percentage of empty values.
          * Containing all unique elements.
+         * Must be type consistent.
 
         """
         arguments = list()
@@ -301,7 +333,7 @@ class Fill(Transformation):
             if (
                 missing > 0
                 and missing < cls.threshold
-                and not values.duplicated().any()
+                and "mixed" not in table.column_types[i]
             ):
                 arguments.append((i,))
         return arguments
@@ -322,7 +354,13 @@ class Fold(Transformation):
     Can only fold tables with headers. Else,
     use a Stack with interval set to 1.
 
+    Attributes:
+        smart: If set to True, will try to use smarter
+            detection of folds in single level headers.
+
     """
+
+    smart: bool = False
 
     def __init__(self, column1: int, column2: int):
         """
@@ -379,8 +417,8 @@ class Fold(Transformation):
                 [i for i, l in enumerate(index.levels) if not any(c for c in l)]
             )
             table.df.columns = index
+            table.header = table.df.columns.nlevels
         return table
-
 
     @classmethod
     def arguments(cls, table: Table) -> List[Tuple[int, int]]:
@@ -394,36 +432,77 @@ class Fold(Transformation):
         column.
 
         """
-        if table.header == 0 or table.n_colors == 0:
-            return []
-        # else, find the candidates
-        arguments = list()
-        # initial position
-        a, b = 0, 0
-        # get the colors
-        colors_header = nzs(table.color_df.columns[a])
-        colors_table = nzs(table.color_df.iloc[:, a])
-        while b < table.width - 1:
-            b += 1
-            colors_header.update(table.color_df.columns[b])
-            colors_table.update(table.color_df.iloc[:, b])
-            # check if range became invalid
-            if (
-                len(colors_table) > 1
-                or len(colors_header) > 1
-                or len(colors_header & colors_table) > 0
-                or table.column_types[a] != table.column_types[b]
-                or "mixed" in table.column_types[a]
-            ):
-                a = b
-                colors_header = nzs(table.color_df.columns[a])
-                colors_table = nzs(table.color_df.iloc[:, a])
-            elif b > a:
-                arguments.append((a, b))
-        return Fold.filter_overlapping(arguments)
+
+        if table.header == 0:
+            return list()
+
+        # initialise candidates
+        candidates = set()
+
+        # single header, look for some combinations of
+        # columns that we think can be folded over
+        if table.header == 1:
+            if table.n_colors > 1:
+                candidates.update(cls.columns_color(table))
+            elif cls.smart:
+                candidates.update(cls.columns_number(table))
+                candidates.update(cls.columns_constant(table))
+
+        # multi header
+        else:
+            if table.n_colors > 1:
+                candidates.update(cls.columns_color(table))
+            else:
+                candidates.update(cls.columns_multi(table))
+
+        # filter candidates with inconsistent types
+        candidates = cls.filter_types(candidates, table)
+
+        return list(candidates)
 
     @staticmethod
-    def filter_overlapping(arguments: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+    def columns_color(table: Table) -> Set[Tuple[int, int]]:
+        """Find candidates based on color."""
+        arguments = set()
+        # get properties used to compute folds
+        properties = list()
+        for i in range(table.width):
+            properties.append(
+                (
+                    [nzs(h) for h in table.color_df.columns[i]],
+                    nzs(table.color_df.iloc[:, i]),
+                    table.column_types[i],
+                )
+            )
+        # look for folds
+        a = None
+        for b, (new_h, new_t, new_type) in enumerate(properties):
+            # folding
+            if a is not None:
+                old_h, old_t, old_type = properties[a]
+                if (
+                    any(len(nh | oh) > 1 for (nh, oh) in zip(new_h, old_h))
+                    or len(new_t | old_t) > 1
+                    or (new_type != "empty" and new_type != old_type)
+                ):
+                    arguments.add((a, b - 1))
+                    a = None
+            # not folding
+            if a is None:
+                if (
+                    len(new_t) <= 1
+                    and len(set.union(*new_h, new_t)) > 1
+                    and "mixed" not in new_type
+                ):
+                    a = b
+        # add final one
+        if a is not None:
+            arguments.add((a, b))
+        return arguments
+
+    @staticmethod
+    def filter_overlapping(arguments: Set[Tuple[int, int]]) -> List[Tuple[int, int]]:
+        arguments = sorted(arguments)
         filtered = list()
         for i, a in enumerate(arguments):
             if i + 1 < len(arguments):
@@ -433,6 +512,77 @@ class Fold(Transformation):
             else:
                 filtered.append(a)
         return filtered
+
+    @staticmethod
+    def filter_types(
+        candidates: Set[Tuple[int, int]], table: Table
+    ) -> Set[Tuple[int, int]]:
+        """Filter arguments that do not fit the type."""
+        arguments = set()
+        for a, b in candidates:
+            types = set(table.column_types[a : b + 1])
+            types.discard("empty")
+            if len(types) == 1:
+                arguments.add((a, b))
+        return arguments
+
+    @staticmethod
+    def columns_number(table: Table) -> Set[Tuple[int, int]]:
+        """Look for column names that are numbers."""
+        result = set()
+        a = -1
+        for b, cell in enumerate(table.df.columns):
+            if cell.datatype == "integer":
+                # start new serie
+                if a < 0:
+                    a = b
+            else:
+                if a > 0:
+                    result.add((a, b - 1))
+                    a = -1
+        return result
+
+    @staticmethod
+    def columns_constant(table: Table) -> Set[Tuple[int, int]]:
+        result = set()
+        a, c = -1, None
+        for b, cell in enumerate(table.df.columns):
+            if cell.value in constants:
+                # start new serie and end previous one
+                # if it is happening
+                if constants[cell.value] is not c:
+                    if c is not None and a < b - 1:
+                        result.add((a, b - 1))
+                    a, c = b, constants[cell.value]
+            # reset
+            else:
+                if c is not None and a < b - 1:
+                    result.add((a, b - 1))
+                a, c = -1, None
+        # finished, add final one
+        if a > 0:
+            result.add((a, table.width - 1))
+        return result
+
+    @staticmethod
+    def columns_multi(table: Table) -> Set[Tuple[int, int]]:
+        columns = [[c.value for c in col] for col in transpose(table.df.columns)]
+        x, last = columns[:-1], columns[-1]
+        # find patterns in the last row of the index
+        patterns = _get_patterns(last)
+        # select those for which the upper levels match
+        # as well, meaning either one value or also
+        # a pattern.
+        results = set()
+        for (b, e, l) in patterns:
+            for row in x:
+                sets = [row[i : i + l] for i in range(b, e, l)]
+                if (
+                    all(len(set(s)) == 1 for s in sets)
+                    or all(sets[0] == b for b in sets[1:]) == 1
+                ):
+                    results.add((b, e - 1))
+        return results
 
     def __str__(self):
         return "Fold({}, {})".format(self._column1, self._column2)
@@ -458,8 +608,27 @@ class Stack(Transformation):
         n = len(tostack)
         # build parts
         left = pd.concat([table.df.iloc[:, : self._column1]] * n, axis=0)
-        middle = pd.concat(tostack)
+        middle = pd.DataFrame(np.vstack([t.values for t in tostack]))
+        middle.index = left.index
         right = pd.concat([table.df.iloc[:, self._column2 :]] * n, axis=0)
+        # build header for middle part by copying
+        # any colors and setting the base of all
+        # removed cells to the remaining cell.
+        header = tostack[0].columns
+        for other in tostack[1:]:
+            o_col = other.columns
+            if isinstance(header, pd.MultiIndex):
+                for i, column in enumerate(header):
+                    for h, o in zip(header, column):
+                        if o.color > 0 and h.color != o.color:
+                            h.color = o.color
+                        o.base = h
+            else:
+                for i, cell in enumerate(header):
+                    if o_col[i].color > 0 and o_col[i].color != cell.color:
+                        cell.color = o_col[i].color
+                    o_col[i].base = cell
+        middle.columns = header
         # combine
         table = copy(table)
         table.df = pd.concat((left, middle, right), axis=1).reset_index(drop=True)
@@ -489,13 +658,16 @@ class Stack(Transformation):
 
         """
         results = list()
-        columns = table.df.columns.tolist()
-        # loop over number of columns to stack
+        # get list of tuples representing headers
+        columns = table.df.columns
+        if isinstance(columns, pd.MultiIndex):
+            columns = [tuple(cell.value for cell in h) for h in columns]
+        else:
+            columns = [cell.value for cell in columns]
+        # look for patterns
         for n in range(2, len(columns) // 2):
-            # loop over initial positions
             i = 0
             while i < (len(columns) - 2 * n):
-                # loop over possible ending positions
                 for j in reversed(range(i + 2 * n, len(columns) + 1, n)):
                     header = {tuple(columns[a : a + n]) for a in range(i, j - n + 1, n)}
                     # if header can be stacked, check if can't be stacked further
@@ -520,12 +692,20 @@ class Stack(Transformation):
 
 
 class Language:
-    """Transformation language."""
+    """Transformation language.
+
+    The language consists of phases of wrangling, which
+    can be initialized with different transformations.
+
+    As a simple example, the Stack and Fold transformations
+    typically take place in later phases.
+
+    """
 
     def __init__(
         self, transformations: Optional[List[Type[Transformation]]] = None
     ) -> None:
-        self._transformations = transformations or list()
+        self._transformations: List[Type[Transformation]] = transformations
 
     def candidates(self, table: Table) -> List[Transformation]:
         """Get transformations that can be applied."""
@@ -535,6 +715,25 @@ class Language:
             for argument in arguments:
                 candidates.append(transformation(*argument))
         return candidates
+
+    # def add_phase(self, transformations: List[Type[Transformation]]) -> None:
+    #     """Add a new phase."""
+    #     self._transformations.append(transformations)
+
+    # def has_next_phase(self) -> bool:
+    #     """Check whether a next phase is available."""
+    #     return self._current < len(self._transformations)
+
+    # def next_phase(self) -> None:
+    #     """Advance to the next phase."""
+    #     self._current += 1
+
+    # @classmethod
+    # def default(cls) -> "Language":
+    #     language = Language()
+    #     language.add_phase([Delete, Divide, Header, Fill])
+    #     language.add_phase([Fold, Stack])
+    #     return language
 
 
 class Program:
@@ -548,6 +747,9 @@ class Program:
         for transformation in self.transformations:
             table = transformation(table)
         return table
+
+    def __add__(self, other) -> "Program":
+        return Program(self.transformations + other.transformations)
 
     def __len__(self) -> int:
         return len(self.transformations)
@@ -586,3 +788,29 @@ def _has_pattern(l: List[Any]) -> bool:
             if p * n == l:
                 return True
     return False
+
+
+def _get_patterns(l: List[Any]) -> List[Tuple[int, int, int]]:
+    """Find patterns in a list.
+
+    Returns:
+        A list of (start, end, stride) tuples.
+
+    """
+    result = list()
+    index = 0
+    while index < (len(l) - 4):
+        for length in range(2, (len(l) - index) // 2):
+            e = l[index : index + length]
+            for n in range(1, (len(l) - index) // length):
+                if l[index + n * length : index + n * length + length] != e:
+                    break
+            # if found a pattern, move pointer
+            # past its end location
+            if n > 1:
+                result.append((index, index + n * length + length, length))
+                index += (n * length) + length
+                break
+        # only increase if not found
+        index += 1
+    return result

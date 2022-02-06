@@ -60,13 +60,24 @@ class WeightedHeuristic(Heuristic):
 
 
 class ColorRowHeuristic(Heuristic):
-    """Check if row with colors exists."""
+    """Check if row with colors exists.
+
+    Args:
+        header: Whether to also consider the header.
+
+    """
+
+    def __init__(self, header: bool = False) -> None:
+        super().__init__()
+        self._header = header
 
     def __call__(self, table: Table) -> float:
         colors = table.color_df
         # get colors in each row
         rows = np.apply_along_axis(nzs, 1, colors.values).tolist()
-        rows.extend(map(nzs, transpose(colors.columns)))
+        # also add header if required
+        if self._header:
+            rows.extend(map(nzs, transpose(colors.columns)))
         # get all unique colors
         unique = set.union(*rows)
         # no colors
@@ -118,7 +129,7 @@ class ColorColumnHeuristic(ColumnHeuristic):
         return [1.0 / max(1, len(n)) for n in columns]
 
 
-class EmptyColumnHeuristic(ColumnHeuristic):
+class EmptyColumnHeuristic(Heuristic):
     """Use empty values to compute heuristic.
 
     Tolerance parameter ensures that missing a few values
@@ -127,18 +138,40 @@ class EmptyColumnHeuristic(ColumnHeuristic):
 
     """
 
-    def __init__(self, tolerance: float = 0.99) -> None:
+    def __init__(self, tolerance: float = 0.75) -> None:
         self._tolerance = tolerance
 
-    def __call__(self, table: Table) -> np.ndarray:
+    def __call__(self, table: Table) -> float:
         scores = list()
         for i in range(table.width):
             v = table[i].map(bool).sum() / float(table.height)
-            if v > self._tolerance:
+            if v > self._tolerance or v == 0:
                 scores.append(1)
             else:
                 scores.append(v)
-        return scores
+        return np.mean(scores)
+
+
+class EmptyRowHeuristic(Heuristic):
+    """Use empty rows to compute heuristic."""
+
+    def __init__(self, tolerance: float = 0.5) -> None:
+        """
+
+        Args:
+            tolerance: If a row contains this proportion
+                of cells, consider it empty.
+
+        """
+        self._tolerance = tolerance
+
+    def __call__(self, table: Table) -> float:
+        score = 0.0
+        for i in range(table.height):
+            v = table[i, :].map(bool).sum() / float(table.width)
+            if v <= self._tolerance:
+                score += 1
+        return 1 - score / table.height
 
 
 class ValueColumnHeuristic(ColumnHeuristic):
@@ -181,7 +214,7 @@ class ValueColumnHeuristic(ColumnHeuristic):
         return scores
 
 
-class TypeColumnHeuristic(ColumnHeuristic):
+class TypeHeuristic(Heuristic):
     """Heuristic based on uniform types.
 
     Computers uniformity of types for all mixed columns,
@@ -189,7 +222,7 @@ class TypeColumnHeuristic(ColumnHeuristic):
 
     """
 
-    def __call__(self, table: Table) -> np.ndarray:
+    def __call__(self, table: Table) -> float:
         ctypes = table.cell_types.T
         dtypes = table.column_types
         scores = np.zeros(table.width)
@@ -200,7 +233,14 @@ class TypeColumnHeuristic(ColumnHeuristic):
                 scores[i] = np.max(counts) / np.count_nonzero(non_empty)
             else:
                 scores[i] = 1.0
-        return scores
+        return np.mean(scores)
+
+
+class WidthHeuristic(Heuristic):
+    """Gives more weight to smaller tables."""
+
+    def __call__(self, table: Table) -> float:
+        return 1 + 1 / table.width
 
 
 # def quality(table: pd.DataFrame, distance: Similarity):

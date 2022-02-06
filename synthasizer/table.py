@@ -32,7 +32,7 @@ class Cell:
     def __init__(self, value: Optional[Any] = None, **kwargs):
         self.value = none(value)
         self.color = 0
-        self.base = None
+        self.base = self
         self.style = defaultdict(nothing)
         self.style["datatype"] = type(value)
         self.style.update(kwargs)
@@ -59,7 +59,8 @@ class Cell:
         return cell
 
     def __eq__(self, other):
-        return isinstance(other, Cell) and (self.value == other.value)
+        # return isinstance(other, Cell) and (self.value == other.value)
+        return id(self) == id(other)
 
     def __ne__(self, other):
         return self.value != other.value
@@ -104,8 +105,7 @@ class Cell:
         if cell.font.color is not None:
             style["color"] = cell.font.color.value
         # build cell
-        new_cell = cls(cell.value, **style)
-        return new_cell
+        return cls(cell.value, **style)
 
 
 class Table:
@@ -168,6 +168,20 @@ class Table:
         table = self
         for i, position in enumerate(positions):
             table = table.color(*position, color=colors[i])
+        return table
+
+    def color_foreground(self) -> "Table":
+        """Generate a table with colors taken from foreground.
+
+        Returns:
+            A table where the background colors
+            are used to generate colors.
+
+        """
+        table = copy(self)
+        for cell in table.cells:
+            cell.color = cell.style["fill"]
+            del cell.style["fill"]
         return table
 
     @cached_property
@@ -292,8 +306,7 @@ class Table:
         return str(self.df)
 
     def __hash__(self) -> int:
-        hash_header = pd.util.hash_pandas_object(self.df.columns)
-        return hash((self.df.values.tobytes(), hash_header.values.tobytes()))
+        return hash(str(self))
 
 
 na_values = {
@@ -348,7 +361,9 @@ def detect_ranges(sheet: Worksheet) -> List[str]:
     mask = np.zeros((sheet.max_row, sheet.max_column), dtype=int)
     for row in sheet.rows:
         for cell in row:
-            if cell.value not in {None, "", np.nan}:
+            if cell.value not in {None, "", np.nan} or isinstance(
+                cell.fill.fgColor.value, int
+            ):
                 mask[cell.row - 1, cell.column - 1] = 1.0
     # look for tables
     tables = list()
@@ -418,5 +433,4 @@ def unmerge(sheet: Worksheet) -> None:
 
 def trim(sheet: Worksheet, table: str) -> str:
     """Trim exterior rows and columns that contain only a single element."""
-
     min_col, min_row, max_col, max_row = range_boundaries(table)

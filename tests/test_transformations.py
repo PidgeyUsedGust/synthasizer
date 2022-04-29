@@ -1,6 +1,8 @@
 from collections import defaultdict
 from numpy import stack
+from synthasizer.conditions import DatatypeCondition
 from synthasizer.transformation import *
+from tests.conftest import nba
 
 
 def all_cells(table: Table) -> bool:
@@ -32,20 +34,29 @@ def test_header_arguments(icecream, nurse, nurse2):
     assert Header.arguments(Fill(0)(icecream)) == [(1,)]
 
 
-def test_divide(car):
-    after = Divide(0, "bold")(car)
-    print(after)
-    for cell in after.df.columns.values:
-        print(cell, id(cell))
+def test_divide(car, nba):
+    after = Divide(0, StyleCondition("bold", True))(car)
+    assert set(a.value for a in after[0]) == {"Audi", "BMW", None}
+    after = Divide(1, DatatypeCondition("string"))(Header(1)(nba))
+    assert after.column_types[1] == "string"
+    assert after.column_types[2] == "integer"
 
 
 def test_divide_deeltijdswerk(deeltijdswerk):
-    divided = Divide(1, "bold")(deeltijdswerk)
+    divided = Divide(1, StyleCondition("bold", True))(deeltijdswerk)
     assert divided.width == deeltijdswerk.width + 1
 
 
-def test_divide_arguments(car):
-    print(Divide.arguments(car))
+def test_divide_arguments(car, nba):
+    arguments = Divide.arguments(car)
+    assert all(c == 0 for c, _ in arguments)
+    after = Divide(0, StyleCondition("bold", True))(car)
+    assert Divide.arguments(after) == set()
+
+
+def test_divide_arguments_color(car):
+    car = car.color_all([(1, 1), (1, 2)])
+    assert (1, StyleCondition("bold", True)) in Divide.arguments(car)
 
 
 def test_fill(icecream, car):
@@ -58,14 +69,16 @@ def test_fill(icecream, car):
     assert filled.df.iloc[2, 0].value == "Banana"
     assert filled.df.iloc[2, 0].base is not None
     # assert filled.df.iloc[1, 0].base is None
-    car = Divide(0, "datatype")(car)
+    car = Divide(0, PatternCondition("word"))(car)
     car_filled = Fill(0)(car)
-    print(car_filled)
+    assert all(bool(c) for c in car_filled[0])
 
 
-def test_fill_arguments(nba):
+def test_fill_arguments(nba, car):
     nba = Header(1)(nba)
     assert Fill.arguments(nba) == [(0,)]
+    car = Divide(0, PatternCondition("words"))(car)
+    assert Fill.arguments(car) == [(0,)]
 
 
 def test_stack_arguments(nurse2):

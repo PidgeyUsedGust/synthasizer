@@ -59,34 +59,6 @@ class WeightedHeuristic(Heuristic):
         return len(self._heuristics) * np.mean(scores)
 
 
-class ColorRowHeuristic(Heuristic):
-    """Check if row with colors exists.
-
-    Args:
-        header: Whether to also consider the header.
-
-    """
-
-    def __init__(self, header: bool = False) -> None:
-        super().__init__()
-        self._header = header
-
-    def __call__(self, table: Table) -> float:
-        colors = table.color_df
-        # get colors in each row
-        rows = np.apply_along_axis(nzs, 1, colors.values).tolist()
-        # also add header if required
-        if self._header:
-            rows.extend(map(nzs, transpose(colors.columns)))
-        # get all unique colors
-        unique = set.union(*rows)
-        # no colors
-        if len(unique) == 0:
-            return 1.0
-        # get score
-        return max(map(len, rows)) / len(unique)
-
-
 class EmptyHeuristic(Heuristic):
     """Consider global empty cells, rather than column based."""
 
@@ -126,7 +98,35 @@ class ColorColumnHeuristic(ColumnHeuristic):
         # remove no colors
         columns = [c - {0} for c in columns]
         # compute score
-        return [1.0 / max(1, len(n)) for n in columns]
+        return np.mean(1.0 / max(1, len(n)) for n in columns)
+
+
+class ColorRowHeuristic(Heuristic):
+    """Check if row with colors exists.
+
+    Args:
+        header: Whether to also consider the header.
+
+    """
+
+    def __init__(self, header: bool = False) -> None:
+        super().__init__()
+        self._header = header
+
+    def __call__(self, table: Table) -> float:
+        colors = table.color_df
+        # get colors in each row
+        rows = np.apply_along_axis(nzs, 1, colors.values).tolist()
+        # also add header if required
+        if self._header:
+            rows.extend(map(nzs, transpose(colors.columns)))
+        # get all unique colors
+        unique = set.union(*rows)
+        # no colors
+        if len(unique) == 0:
+            return 1.0
+        # get score
+        return max(map(len, rows)) / len(unique)
 
 
 class EmptyColumnHeuristic(Heuristic):

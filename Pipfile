@@ -8,6 +8,8 @@ ipykernel = "*"
 black = "*"
 jupyter = "*"
 pyinstrument = "*"
+pytest = "*"
+ipywidgets = "*"
 
 [packages]
 synthasizer = {editable = true, path = "."}
@@ -16,7 +18,7 @@ openpyxl = "*"
 textdistance = "*"
 
 [requires]
-python_version = "3.9"
+python_version = "3"
 
 [scripts]
 install_kernel = "python -m ipykernel install --user --name synthasizer --display-name \"synthasizer\""

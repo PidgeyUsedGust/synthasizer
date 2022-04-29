@@ -1,16 +1,24 @@
 from abc import ABC, abstractmethod, abstractclassmethod
 from ast import arg, arguments
+from collections import defaultdict
 from copy import copy
 from itertools import chain
+import itertools
 from turtle import width
-from typing import List, Set, Tuple, Any, Union, Optional, Type, Iterable
+from typing import Dict, List, Set, Tuple, Any, Union, Optional, Type, Iterable
 import inspect
 from unicodedata import name
 from urllib.parse import parse_qs
 import numpy as np
 import pandas as pd
 from pyparsing import col
-from .conditions import Condition, EmptyCondition, StyleCondition
+from .conditions import (
+    Condition,
+    DatatypeCondition,
+    EmptyCondition,
+    PatternCondition,
+    StyleCondition,
+)
 from .table import Table, Cell
 from .utilities import nzs, infer_types, constants, transpose
 
@@ -48,7 +56,7 @@ class Transformation(ABC):
 class Delete(Transformation):
     """Delete all rows that don't specify a condition in a column"""
 
-    conditions = [EmptyCondition, StyleCondition]
+    conditions = [EmptyCondition]
     """List of conditions."""
 
     def __init__(self, column: int, condition: Condition):
@@ -69,7 +77,6 @@ class Delete(Transformation):
             column = table.df.iloc[:, i]
             for candidate in cls.conditions:
                 for condition in candidate.generate(column.tolist()):
-
                     arguments.append((i, condition))
         return arguments
 
@@ -80,7 +87,6 @@ class Delete(Transformation):
             column = table.df.iloc[:, i]
             colors = table.color_df.iloc[:, i]
             colors = colors[colors > 0]
-            print(colors)
             for candidate in cls.conditions:
                 for condition in candidate.generate(column.tolist()):
                     arguments.append((i, condition))
@@ -105,19 +111,18 @@ class Divide(Transformation):
 
     """
 
-    """Whether to use styles or not."""
-    style = True
+    conditions = [StyleCondition, DatatypeCondition, PatternCondition]
+    """List of conditions."""
 
-    def __init__(self, column: int, on: str = "datatype"):
+    def __init__(self, column: int, on: Condition):
         self._column = column
         self._on = on
 
     def __call__(self, table: Table) -> Table:
         table = copy(table)
         column = table[self._column]
-        values = {c.style[self._on] for c in column}
-        values.discard("empty")
-        masks = [column.map(lambda x: x.style[self._on] == value) for value in values]
+        mask = column.map(self._on)
+        masks = [mask, ~mask]
         columns = [pd.Series(column[mask], name=copy(column.name)) for mask in masks]
         data = pd.concat(columns, axis=1)
         table.df = pd.concat(
@@ -127,45 +132,68 @@ class Divide(Transformation):
 
     @classmethod
     def arguments(cls, table: Table) -> List[Tuple[int, str]]:
+        # always include datatype
         arguments = set(cls.arguments_datatype(table))
-        if cls.style:
-            arguments.update(cls.arguments_style(table))
-        return list(arguments)
+        # try to figure out other sets of cells to divide
+        rows = cls.single_rows(table)
+        for i in range(table.width):
+            column = table[i]
+            # single row
+            match = {c for c in column[rows] if c}
+            other = {c for c in column[~rows] if c}
+            if len(match) > 0 and len(other) > 0:
+                for argument in cls.arguments_for(match, other):
+                    arguments.add((i, argument))
+            # colors
+            colors = nzs(table.color_df.iloc[:, i])
+            if len(colors) > 1:
+                colored = defaultdict(list)
+                for cell in column:
+                    if cell.color > 0:
+                        colored[cell.color].append(cell)
+                for a, b in itertools.combinations(colored.values(), 2):
+                    for argument in cls.arguments_for(a, b):
+                        arguments.add((i, argument))
+        return arguments
 
     @classmethod
-    def arguments_datatype(cls, table: Table) -> List[Tuple[int, str]]:
+    def arguments_datatype(cls, table: Table) -> List[Tuple[int, Condition]]:
         ctypes = table.cell_types.T
         result = list()
         for i in range(table.width):
             types = set(ctypes[i])
             types.discard("empty")
             if len(types) > 1:
-                result.append((i, "datatype"))
+                if len(types) == 2:
+                    result.append((i, DatatypeCondition(next(iter(types)))))
+                else:
+                    for t in types:
+                        result.append((i, DatatypeCondition(t)))
         return result
 
     @classmethod
-    def arguments_style(cls, table: Table) -> List[Tuple[int, str]]:
-        values = (table.df.values != Cell(None)).T
-        styles = np.vectorize(cls.extract_style)(table.df.values).T
-        result = list()
-        for i in range(table.width):
-            if len(styles[i][values[i]]) < 1:
-                continue
-            union = set.union(*styles[i][values[i]], set())
-            inter = set.intersection(*styles[i][values[i]])
-            for (k, _) in union - inter:
-                result.append((i, k))
-        return result
+    def arguments_for(
+        cls, a: Iterable[Cell], b: Iterable[Cell]
+    ) -> List[Tuple[int, str]]:
+        """Generate arguments to divide two sets of cells."""
+        conditions_a = set.union(
+            *[condition.generate(a) for condition in cls.conditions]
+        )
+        conditions_b = set.union(
+            *[condition.generate(b) for condition in cls.conditions]
+        )
+        return conditions_a - conditions_b
 
-    @classmethod
-    def arguments_color(cls, table: Table) -> List[Tuple[int, str]]:
-        pass
+    @staticmethod
+    def single_rows(table: Table) -> Dict[int, List[int]]:
+        """Extract single rows."""
+        return np.sum(np.vectorize(bool)(table.df), axis=1) == 1
 
-    @classmethod
-    def extract_style(cls, cell: Cell) -> set[Tuple[str, Any]]:
-        if not cell:
-            return set()
-        return set(cell.style.items())
+    # @classmethod
+    # def extract_style(cls, cell: Cell) -> set[Tuple[str, Any]]:
+    #     if not cell:
+    #         return set()
+    #     return set(cell.style.items())
 
     def __str__(self) -> str:
         return "Divide({}, {})".format(self._column, self._on)

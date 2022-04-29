@@ -34,7 +34,7 @@ class Cell:
         self.color = 0
         self.base = self
         self.style = defaultdict(nothing)
-        self.style["datatype"] = type(value)
+        # self.style["datatype"] = type(value)
         self.style.update(kwargs)
 
     def same_style(self, other: "Cell") -> bool:

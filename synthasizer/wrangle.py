@@ -24,7 +24,6 @@ class Wrangler:
         error: Optional[ReconstructionError] = None,
         strategy: Optional[Strategy] = None,
         max_depth: int = 5,
-        max_pass: int = 0,
         max_time: float = 1,
         verbose: bool = False,
     ) -> None:
@@ -32,7 +31,6 @@ class Wrangler:
 
         Args:
             max_depth: Maximal number of transformations.
-            max_pass:
             max_time: Maximal number of seconds.
 
         """
@@ -40,7 +38,6 @@ class Wrangler:
         self._error = error or ThresholdedReconstructionError()
         self._strategy = strategy or Astar()
         self._max_depth = max_depth
-        self._max_pass = max_pass
         self._max_time = max_time
         self._verbose = verbose
 

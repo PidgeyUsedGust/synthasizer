@@ -9,3 +9,4 @@ build/
 env
 dist
 synth_tests
+data/
